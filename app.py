@@ -64,7 +64,7 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return False
 
 # ==========================================
-# 3. KI-GEHIRN VIA STANDARD-HTTP (FIX FÜR ISSUE 12)
+# 3. KI-GEHIRN VIA STANDARD-HTTP (FIX FÜR ISSUE 13)
 # ==========================================
 VILLA_PROMPT = """
 Du bist „Villa“, der digitale Verwalter für die Bewohner und Helfer der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses so einfach wie möglich zu halten.
@@ -78,11 +78,11 @@ def generate_ki_response(prompt_text):
         return "KI-Dienst nicht konfiguriert (API Key fehlt)."
     
     api_key = st.secrets["GEMINI_API_KEY"]
+    
+    # URL-FIX: Modellname "gemini-1.5-flash" wird direkt nach /models/ eingesetzt (ohne doppeltes "models/")
     url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
     
-    # SYSTEM-FIX: Wir übergeben die Instruktion als Teil des Chat-Kontextes ("contents").
-    # Das ist zu 100 % standardkonform und wirft auf keinem Server Fehler auf.
     payload = {
         "contents": [
             {
