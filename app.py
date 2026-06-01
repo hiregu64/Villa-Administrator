@@ -1,6 +1,6 @@
 import streamlit as st
-from google import genai
-from google.genai import types
+import requests
+import json
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -64,32 +64,52 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return False
 
 # ==========================================
-# 3. KI-GEHIRN INITIALISIERUNG (NEUES GOOGLE-GENAI SDK)
+# 3. KI-GEHIRN VIA DIREKT-HTTP (FIX FÜR ISSUE 11)
 # ==========================================
 VILLA_PROMPT = """
 Du bist „Villa“, der digitale Verwalter für die Bewohner und Helfer der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses so einfach wie möglich zu halten.
 Beziehe dich bei allgemeinen Abläufen auf 'Villa Wissen_72.jfif' und bei der Wasserversorgung auf 'PXL_20260516_202437801_72.jpg'.
 """
 
-client = None
-if "GEMINI_API_KEY" in st.secrets:
-    # Der neue genai.Client nutzt automatisch das stabile API-Protokoll v1
-    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-
 def generate_ki_response(prompt_text):
-    if client is None:
+    if "GEMINI_API_KEY" not in st.secrets:
         return "KI-Dienst nicht konfiguriert (API Key fehlt)."
+    
+    api_key = st.secrets["GEMINI_API_KEY"]
+    
+    # Absolute Erzwingung der stabilen v1-Schnittstelle direkt über die REST-URL
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
+    
+    headers = {"Content-Type": "application/json"}
+    
+    # Payload-Struktur exakt nach Googles v1-Spezifikation inklusive System-Instruction
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt_text}
+                ]
+            }
+        ],
+        "systemInstruction": {
+            "parts": [
+                {"text": VILLA_PROMPT}
+            ]
+        }
+    }
+    
     try:
-        response = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=prompt_text,
-            config=types.GenerateContentConfig(
-                system_instruction=VILLA_PROMPT
-            )
-        )
-        return response.text
+        response = requests.post(url, headers=headers, json=payload)
+        response_json = response.json()
+        
+        if response.status_code == 200:
+            # Extrahiere den Antworttext sauber aus der Google JSON-Struktur
+            return response_json['candidates'][0]['content']['parts'][0]['text']
+        else:
+            error_msg = response_json.get('error', {}).get('message', 'Unbekannter API-Fehler')
+            return f"Fehler bei der API-Verarbeitung ({response.status_code}): {error_msg}"
     except Exception as e:
-        raise e
+        return f"Verbindungsfehler zur KI-Schnittstelle: {e}"
 
 # ==========================================
 # 4. BENUTZEROBERFLÄCHE (STREAMLIT UI)
@@ -191,16 +211,13 @@ if nutzer_rolle != "Bitte auswählen...":
             append_info_to_drive(df_wissen, f"Button-Aktion: {gewaehlte_aktion}", nutzer_rolle, kategorie_auswahl)
         
         kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
-        try:
-            antwort_text = generate_ki_response(
-                f"SYSTEM-BEFEHL: Der Nutzer hat den Button für '{gewaehlte_aktion}' gedrückt. "
-                f"Antworte ihm exakt mit der Spezifikations-Gegenfrage: '{button_prompt}'. "
-                f"Gib keine weiteren Erklärungen ab, sondern warte auf seine Eingabe zum Bereich '{kategorie_auswahl}'. {kontext}"
-            )
-            st.session_state.messages.append({"role": "assistant", "content": antwort_text})
-            st.rerun()
-        except Exception as e:
-            st.error(f"Fehler bei der Verarbeitung: {e}")
+        antwort_text = generate_ki_response(
+            f"SYSTEM-BEFEHL: Der Nutzer hat den Button für '{gewaehlte_aktion}' gedrückt. "
+            f"Antworte ihm exakt mit der Spezifikations-Gegenfrage: '{button_prompt}'. "
+            f"Gib keine weiteren Erklärungen ab, sondern warte auf seine Eingabe zum Bereich '{kategorie_auswahl}'. {kontext}"
+        )
+        st.session_state.messages.append({"role": "assistant", "content": antwort_text})
+        st.rerun()
 
 # Manueller Chat-Input
 if prompt := st.chat_input("Wie kann ich helfen? (z.B. 'Frage: Wo ist der Hauptwasserhahn?')"):
@@ -220,16 +237,13 @@ if prompt := st.chat_input("Wie kann ich helfen? (z.B. 'Frage: Wo ist der Hauptw
                 st.cache_data.clear()
                 df_wissen, _ = load_data_from_drive()
 
-        # KI-Antwort generieren via stabiler Wrapper-Funktion
+        # KI-Antwort generieren via Direkt-HTTP
         kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
         with st.chat_message("assistant"):
-            try:
-                antwort_text = generate_ki_response(
-                    f"SYSTEM-KONTEXT: Der Nutzer tippt in der Rolle '{nutzer_rolle}'. "
-                    f"Ausgewählter Bereich im HMI: '{kategorie_auswahl if 'kategorie_auswahl' in locals() else 'Alle Einträge'}'.\n"
-                    f"Anfrage: {prompt} {kontext}"
-                )
-                st.markdown(antwort_text)
-                st.session_state.messages.append({"role": "assistant", "content": antwort_text})
-            except Exception as e:
-                st.error(f"Fehler bei der KI-Verarbeitung: {e}")
+            antwort_text = generate_ki_response(
+                f"SYSTEM-KONTEXT: Der Nutzer tippt in der Rolle '{nutzer_rolle}'. "
+                f"Ausgewählter Bereich im HMI: '{kategorie_auswahl if 'kategorie_auswahl' in locals() else 'Alle Einträge'}'.\n"
+                f"Anfrage: {prompt} {kontext}"
+            )
+            st.markdown(antwort_text)
+            st.session_state.messages.append({"role": "assistant", "content": antwort_text})
