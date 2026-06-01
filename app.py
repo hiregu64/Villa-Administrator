@@ -2,25 +2,25 @@ import streamlit as st
 import google.generativeai as genai
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 import pandas as pd
 import io
+import datetime
+
+# Google File ID der Excel-Tabelle
+FILE_ID = '1FzhWZuO6aRZkdRuQBzaojhkq7bQDyprl'
 
 # ==========================================
-# 1. LIVE-VERBINDUNG ZU GOOGLE DRIVE
+# 1. LIVE-DATEN AUS GOOGLE DRIVE LESEN
 # ==========================================
+@st.cache_data(ttl=60)  # Cache für 1 Minute, um API-Limits zu schonen
 def load_data_from_drive():
     try:
-        # Holt die JSON-Zugangsdaten aus den Streamlit Secrets
         creds_dict = st.secrets["GOOGLE_CREDENTIALS"]
         creds = service_account.Credentials.from_service_account_info(creds_dict)
         service = build('drive', 'v3', credentials=creds)
         
-        # Die ID deiner Excel-Datei aus deinem Google Drive Link
-        file_id = '1FzhWZuO6aRZkdRuQBzaojhkq7bQDyprl'
-        
-        # Datei aus Drive in den Arbeitsspeicher laden
-        request = service.files().get_media(fileId=file_id)
+        request = service.files().get_media(fileId=FILE_ID)
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
         done = False
@@ -28,92 +28,140 @@ def load_data_from_drive():
             status, done = downloader.next_chunk()
             
         fh.seek(0)
-        # Liest die Excel-Wissensbasis live ein
-        df = pd.read_excel(fh)
-        return df
+        return pd.read_excel(fh), service
     except Exception as e:
         st.error(f"Fehler bei der Verbindung zur Google Drive Wissensbasis: {e}")
-        return None
+        return None, None
 
-# Daten live laden
-df_wissen = load_data_from_drive()
+df_wissen, drive_service = load_data_from_drive()
 
 # ==========================================
-# 2. DAS NEUE KI-GEHIRN (SYSTEM INSTRUCTION)
+# 2. LIVE-UPDATE IN GOOGLE DRIVE SCHREIBEN
+# ==========================================
+def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"):
+    try:
+        neue_zeile = {
+            "Zeitstempel": datetime.datetime.now().strftime("%d.%m.%Y %H:%M"),
+            "Nutzer": nutzername,
+            "Kategorie": kategorie,
+            "Eintrag / Update": neuer_text
+        }
+        
+        df_aktualisiert = pd.concat([df, pd.DataFrame([neue_zeile])], ignore_index=True)
+        
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_aktualisiert.to_excel(writer, index=False)
+        output.seek(0)
+        
+        media = MediaIoBaseUpload(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', resumable=True)
+        drive_service.files().update(fileId=FILE_ID, media_body=media).execute()
+        st.cache_data.clear()  # Cache leeren, um frische Daten zu erzwingen
+        return True
+    except Exception as e:
+        st.error(f"Fehler beim Schreiben in Google Drive: {e}")
+        return False
+
+# ==========================================
+# 3. KI-GEHIRN INITIALISIERUNG
 # ==========================================
 VILLA_PROMPT = """
 Du bist „Villa“, der fürsorgliche, hilfreiche Freund und digitale Verwalter für die Bewohner und Helfer der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses für alle Benutzer (Besucher, Eigentümer, Administratoren und Handwerker) so einfach wie möglich zu halten.
 
-Technische Architektur & Datenbasis:
-Du agierst als die Logik-Ebene einer Streamlit-Web-App. Dir steht im Hintergrund eine Excel-Wissensbasis auf Google Drive zur Verfügung (Villa - Systeme und Ausstattung.xlsx). Du liest Daten aus dieser Tabelle und schreibst Updates über eine Google Service Account API direkt dorthin zurück.
-
-Kommunikationsregeln & Gesprächsführung:
-- Erstkontakt / Begrüßung: Antworte extrem kurz, kompakt und smartphone-optimiert. Nenne kurz deine Aufgabe und verweise direkt auf die drei wesentlichen Interaktions-Funktionen („Hilfe“, „Frage“, „Information“). Keine langen Erklärungen vorab.
-- Verhalten bei expliziter Bitte um „Hilfe“ (oder Keyword Hilfe): Schalte in den ausführlichen, maximal hilfsbereiten Unterstützungsmodus. Erkläre den Nutzern:
-  1. Welche Funktionen sie nutzen können.
-  2. Wie du zwischen einer reinen Abfrage (Frage:) und dem Einpflegen neuer Daten (Information:) unterscheidest.
-  3. Welche konkreten, sinnvollen Fragen sie stellen können (z. B. „Welche Wartung ist überfällig?“, „Welche Wartungen sind demnächst fällig?“, „Welche Störfälle gab es derletzt (Zeitraum)?“).
-- Visuelle Referenzen: Bei Erklärungen zu den Abläufen referenzierst du das Use-Case-Diagramm unter dem Namen Villa Wissen_74.jfif. Bei Fragen zur Wasserversorgung oder zum Systemaufbau referenzierst du die handgezeichnete Skizze des Wasserdrucksystems unter dem Namen PXL_20260516_202437801_74.jpg.
-
-Tonalität: Authentisch, empathisch, geerdet und mit einem Hauch von herzlichem Witz – wie ein verlässlicher Partner vor Ort.
+Falls Hilfe angefordert wird: Erkläre die Funktionen und verweise bezüglich der Abläufe auf das Use-Case-Diagramm „Villa Wissen_72.jfif“.
+Falls Fragen zur Wasserversorgung aufkommen, verweise direkt auf die Skizze des Wasserdrucksystems „PXL_20260516_202437801_72.jpg“.
 """
 
-# Gemini API konfigurieren
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-else:
-    st.error("Gemini API Key fehlt in den Secrets!")
-
-# Modell mit dem neuen Gehirn starten
-model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash",
-    system_instruction=VILLA_PROMPT
-)
+model = genai.GenerativeModel(model_name="gemini-1.5-flash", system_instruction=VILLA_PROMPT)
 
 # ==========================================
-# 3. BENUTZEROBERFLÄCHE (STREAMLIT APP)
+# 4. BENUTZEROBERFLÄCHE (STREAMLIT UI)
 # ==========================================
 st.set_page_config(page_title="Villa Verwalter", page_icon="☀️", layout="centered")
-
 st.title("☀️ Villa Wissensbasis")
-st.subheader("Dein digitaler Verwalter")
 
-# Benutzer-Auswahl (für das Protokoll)
-nutzer = st.selectbox("Wer bist du?", ["Bitte auswählen...", "Anja", "Georgos", "Panajotis", "Fotini", "Handwerker/Helfer"])
+# Rollen-Auswahl
+nutzer_rolle = st.selectbox("Wer bist du?", ["Bitte auswählen...", "Besucher", "Eigentümer", "Administrator", "Handwerker/Helfer"])
 
-# Chat-Verlauf initialisieren
 if "messages" not in st.session_state:
-    st.session_state.messages = []
-    # Kurzer Erstkontakt als Standard-Begrüßung durch die KI
-    st.session_state.messages.append({
+    st.session_state.messages = [{
         "role": "assistant", 
-        "content": "Hallo! Ich bin „Villa“ – dein digitaler Verwalter. ☀️\nIch helfe dir, den Überblick zu behalten. Nutze einfach dein Tastatur-Mikrofon.\n\nVerwende am Anfang:\n* **`Hilfe`** (Anleitung öffnen)\n* **`Frage: [Deine Frage]`** (Suchen)\n* **`Information: [Dein Update]`** (Eintragen)"
-    })
+        "content": "Hallo! Ich bin „Villa“ – dein digitaler Verwalter. ☀️ Ich helfe dir, den Betrieb des Hauses so einfach wie möglich zu halten. Nutze gerne dein Tastatur-Mikrofon!\n\nVerwende die Buttons oder tippe direkt los mit den Begriffen **`Hilfe`**, **`Frage:`** oder **`Information:`**."
+    }]
 
 # Chat-Verlauf anzeigen
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Chat-Eingabe (Smartphone-optimiert)
-if prompt := st.chat_input("Wie kann ich helfen?"):
-    if nutzer == "Bitte auswählen...":
-        st.warning("Bitte wähle oben zuerst deinen Namen aus, bevor du eine Nachricht sendest!")
+# Dynamische Steuerung basierend auf der Rolle
+if nutzer_rolle != "Bitte auswählen...":
+    st.write("---")
+    st.subheader("Schnellauswahl: Was möchtest du tun?")
+    
+    # Grid für die Konzept-Buttons
+    col1, col2, col3 = st.columns(3)
+    col4, col5 = st.columns(2)
+    
+    aktion = None
+    with col1:
+        if st.button("ℹ️ Ich brauche Hilfe."): aktion = "Hilfe"
+    with col2:
+        if st.button("⚠️ Es gibt eine Störung."): aktion = "Störung"
+    with col3:
+        if st.button("📊 Ich benötige einen Bericht."): aktion = "Bericht"
+    with col4:
+        if st.button("📝 Ich habe neue Informationen."): aktion = "Information"
+    with col5:
+        if st.button("🛠️ Ich möchte eine Änderung am XLS vornehmen."): aktion = "Änderung"
+
+    # Dropdown-Verständnishilfe nach Konzept
+    kategorie_auswahl = st.selectbox(
+        "Bereich einschränken (optional zur Verbesserung des Eingabeverständnisses):",
+        ["Keine Einschränkung", "Geräte / Ausst. innen", "Geräte / Ausst. außen", "Systeme"]
+    )
+
+    # Logikverarbeitung der Konzept-Buttons
+    if aktion:
+        prompt_text = ""
+        if aktion == "Hilfe":
+            prompt_text = "Hilfe"
+        elif aktion == "Störung":
+            prompt_text = f"Frage: Es gibt eine Störung im Bereich '{kategorie_auswahl}'. Was sollte ich jetzt tun?"
+        elif aktion == "Bericht":
+            prompt_text = f"Frage: Gib mir einen Bericht zum Thema '{kategorie_auswahl}' für die letzte Zeit."
+        elif aktion == "Information":
+            prompt_text = f"Information: [Bitte hier deine neuen Infos eintragen] (Bereich: {kategorie_auswahl})"
+        elif aktion == "Änderung":
+            prompt_text = f"Information: Ich möchte eine Änderung am XLS vornehmen im Bereich '{kategorie_auswahl}': "
+        
+        st.info(f"Vorschlag generiert! Kopiere diesen Text oder nutze ihn als Vorlage für das Eingabefeld unten: \n\n**`{prompt_text}`**")
+
+# Manueller Chat-Input (Smartphone-optimiert)
+if prompt := st.chat_input("Wie kann ich helfen? (z.B. 'Frage: Wann war die letzte Wartung?')"):
+    if nutzer_rolle == "Bitte auswählen...":
+        st.warning("Bitte wähle oben zuerst aus, wer du bist!")
     else:
-        # Nutzer-Nachricht anzeigen
         with st.chat_message("user"):
             st.markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
         
-        # Kontext aus der Excel-Tabelle für die KI aufbereiten
-        kontext = ""
-        if df_wissen is not None:
-            kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}"
-        
-        # Antwort von Gemini generieren lassen
+        # Falls es sich um einen Schreibbefehl handelt (Information: )
+        if prompt.strip().lower().startswith("information:") and df_wissen is not None:
+            reiner_text = prompt.split(":", 1)[1].strip()
+            kat = kategorie_auswahl if 'kategorie_auswahl' in locals() else "Allgemein"
+            erfolg = append_info_to_drive(df_wissen, reiner_text, nutzer_rolle, kat)
+            if erfolg:
+                st.success("Eintrag erfolgreich in der Google Drive Excel-Wissensbasis gespeichert!")
+                df_wissen, _ = load_data_from_drive()
+
+        # KI-Antwort generieren mit Live-Tabellenkontext
+        kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
         with st.chat_message("assistant"):
             try:
-                response = model.generate_content(prompt + kontext)
+                response = model.generate_content(f"Nutzer-Rolle: {nutzer_rolle}\nGewählter Bereich: {kategorie_auswahl if 'kategorie_auswahl' in locals() else 'Keiner'}\nAnfrage: {prompt} {kontext}")
                 st.markdown(response.text)
                 st.session_state.messages.append({"role": "assistant", "content": response.text})
             except Exception as e:
