@@ -63,7 +63,7 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return False
 
 # ==========================================
-# 3. KI-GEHIRN INITIALISIERUNG (CRITICAL FIX FÜR ISSUE 9)
+# 3. KI-GEHIRN INITIALISIERUNG
 # ==========================================
 VILLA_PROMPT = """
 Du bist „Villa“, der digitale Verwalter für die Bewohner und Helfer der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses so einfach wie möglich zu halten.
@@ -73,26 +73,21 @@ Beziehe dich bei allgemeinen Abläufen auf 'Villa Wissen_72.jfif' und bei der Wa
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-# Lösung für den v1beta 404 Fehler: Konfiguration erzwingen
 try:
-    # Versuche die standardmäßige, stabile API-Konfiguration zu laden
     model = genai.GenerativeModel(
         model_name="gemini-1.5-flash",
         system_instruction=VILLA_PROMPT
     )
 except Exception:
-    # Fallback, falls die Umgebung das Präfix benötigt
     model = genai.GenerativeModel(
         model_name="models/gemini-1.5-flash",
         system_instruction=VILLA_PROMPT
     )
 
 def generate_ki_response(prompt_text):
-    """Kapselt den KI-Aufruf, um im Notfall überholte API-Versionen abzufangen"""
     try:
         return model.generate_content(prompt_text).text
     except Exception as e:
-        # Falls immer noch ein 404 v1beta geworfen wird, rufen wir das Modell direkt über die genai-Struktur auf
         try:
             res = genai.generate_text(
                 model="models/gemini-1.5-flash",
@@ -114,7 +109,7 @@ nutzer_rolle = st.selectbox("Wer bist du?", ["Bitte auswählen...", "Besucher", 
 if "messages" not in st.session_state:
     st.session_state.messages = [{
         "role": "assistant", 
-        "content": "Hallo! Ich bin „Villa“ – dein digitaler Verwalter. ☀️ Nutze gerne dein Tastatur-Mikrofon!\n\nWähle oben deine Rolle aus, um zu beginnen."
+        "content": "Hallo! Ich bin „Villa Barsinghausen“ – dein digitaler Verwalter. ☀️ Nutze gerne dein Tastatur-Mikrofon!\n\nWähle oben deine Rolle aus, um zu beginnen."
     }]
 
 # Chat-Verlauf anzeigen
@@ -129,48 +124,48 @@ gewaehlte_aktion = "Allgemein"
 if nutzer_rolle != "Bitte auswählen...":
     st.write("---")
     
-    # 1. SCHRITT: NUTZUNG DER WISSENSBASIS FÜR (BUTTONS) [cite: 15, 21]
+    # 1. SCHRITT: NUTZUNG DER WISSENSBASIS FÜR (BUTTONS)
     st.subheader("Nutzung der Wissensbasis für:")
     
-    if nutzer_rolle == "Besucher": [cite: 2, 53]
+    if nutzer_rolle == "Besucher":
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("ℹ️ Ich brauche Hilfe."): [cite: 16]
-                button_prompt = "Was möchtest du wissen?" [cite: 23]
+            if st.button("ℹ️ Ich brauche Hilfe."):
+                button_prompt = "Was möchtest du wissen?"
                 gewaehlte_aktion = "Hilfe"
         with col2:
-            if st.button("⚠️ Es gibt eine Störung."): [cite: 17]
-                button_prompt = "Was ist passiert?" [cite: 24]
+            if st.button("⚠️ Es gibt eine Störung."):
+                button_prompt = "Was ist passiert?"
                 gewaehlte_aktion = "Störung"
     else:
         col1, col2, col3 = st.columns(3)
         col4, col5 = st.columns(2)
         with col1:
-            if st.button("ℹ️ Ich brauche Hilfe."): [cite: 16]
-                button_prompt = "Was möchtest du wissen?" [cite: 23]
+            if st.button("ℹ️ Ich brauche Hilfe."):
+                button_prompt = "Was möchtest du wissen?"
                 gewaehlte_aktion = "Hilfe"
         with col2:
-            if st.button("⚠️ Es gibt eine Störung."): [cite: 17]
-                button_prompt = "Was ist passiert?" [cite: 24]
+            if st.button("⚠️ Es gibt eine Störung."):
+                button_prompt = "Was ist passiert?"
                 gewaehlte_aktion = "Störung"
         with col3:
-            if st.button("📊 Ich benötige einen Bericht."): [cite: 18]
-                button_prompt = "Nenne mir bitte den Zeitraum und das Thema." [cite: 26]
+            if st.button("📊 Ich benötige einen Bericht."):
+                button_prompt = "Nenne mir bitte den Zeitraum und das Thema."
                 gewaehlte_aktion = "Bericht"
         with col4:
-            if st.button("📝 Ich habe neue Informationen."): [cite: 19]
-                button_prompt = "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu." [cite: 27]
+            if st.button("📝 Ich habe neue Informationen."):
+                button_prompt = "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu."
                 gewaehlte_aktion = "Information"
         with col5:
-            if st.button("🛠️ Ich möchte eine Änderung am XLS vornehmen."): [cite: 20]
-                button_prompt = "Beschreibe deine Änderung so genau wie möglich." [cite: 28]
+            if st.button("🛠️ Ich möchte eine Änderung am XLS vornehmen."):
+                button_prompt = "Beschreibe deine Änderung so genau wie möglich."
                 gewaehlte_aktion = "Änderung"
 
-    # 2. SCHRITT: DROP-DOWN AUSWAHL ZUR UNTERSTÜTZUNG (DARUNTER) [cite: 38]
+    # 2. SCHRITT: DROP-DOWN AUSWAHL ZUR UNTERSTÜTZUNG (DARUNTER)
     st.write("")
     kategorie_auswahl = st.selectbox(
         "Verständnishilfe (Auswahl filtert die Liste der Bezeichnungen):",
-        ["Alle Einträge", "Geräte / Ausst. innen", "Geräte / Ausst. außen", "Systeme"] [cite: 30, 31]
+        ["Alle Einträge", "Geräte / Ausst. innen", "Geräte / Ausst. außen", "Systeme"]
     )
     
     # 3. SCHRITT: ANZEIGE DER BEZEICHNUNGEN
