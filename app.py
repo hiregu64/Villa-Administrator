@@ -63,7 +63,7 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return False
 
 # ==========================================
-# 3. KI-GEHIRN INITIALISIERUNG (FIX FÜR ISSUE 8)
+# 3. KI-GEHIRN INITIALISIERUNG (CRITICAL FIX FÜR ISSUE 9)
 # ==========================================
 VILLA_PROMPT = """
 Du bist „Villa“, der digitale Verwalter für die Bewohner und Helfer der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses so einfach wie möglich zu halten.
@@ -73,12 +73,34 @@ Beziehe dich bei allgemeinen Abläufen auf 'Villa Wissen_72.jfif' und bei der Wa
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
+# Lösung für den v1beta 404 Fehler: Konfiguration erzwingen
 try:
-    # ERSTE STRATEGIE: Verwende den offiziellen Standard-String ohne "models/" Präfix
-    model = genai.GenerativeModel(model_name="gemini-1.5-flash", system_instruction=VILLA_PROMPT)
+    # Versuche die standardmäßige, stabile API-Konfiguration zu laden
+    model = genai.GenerativeModel(
+        model_name="gemini-1.5-flash",
+        system_instruction=VILLA_PROMPT
+    )
 except Exception:
-    # ZWEITE STRATEGIE: Falls die installierte Bibliotheksversion das Präfix erzwingt
-    model = genai.GenerativeModel(model_name="models/gemini-1.5-flash", system_instruction=VILLA_PROMPT)
+    # Fallback, falls die Umgebung das Präfix benötigt
+    model = genai.GenerativeModel(
+        model_name="models/gemini-1.5-flash",
+        system_instruction=VILLA_PROMPT
+    )
+
+def generate_ki_response(prompt_text):
+    """Kapselt den KI-Aufruf, um im Notfall überholte API-Versionen abzufangen"""
+    try:
+        return model.generate_content(prompt_text).text
+    except Exception as e:
+        # Falls immer noch ein 404 v1beta geworfen wird, rufen wir das Modell direkt über die genai-Struktur auf
+        try:
+            res = genai.generate_text(
+                model="models/gemini-1.5-flash",
+                prompt=f"{VILLA_PROMPT}\n\nAnfrage:\n{prompt_text}"
+            )
+            return res.result
+        except Exception:
+            raise e
 
 # ==========================================
 # 4. BENUTZEROBERFLÄCHE (STREAMLIT UI)
@@ -86,7 +108,7 @@ except Exception:
 st.set_page_config(page_title="Villa Verwalter", page_icon="☀️", layout="centered")
 st.title("☀️ Villa Wissensbasis")
 
-# Rollen-Auswahl (Ganz oben)
+# Rollen-Auswahl
 nutzer_rolle = st.selectbox("Wer bist du?", ["Bitte auswählen...", "Besucher", "Eigentümer", "Administrator", "Handwerker/Helfer"])
 
 if "messages" not in st.session_state:
@@ -107,48 +129,48 @@ gewaehlte_aktion = "Allgemein"
 if nutzer_rolle != "Bitte auswählen...":
     st.write("---")
     
-    # 1. SCHRITT: NUTZUNG DER WISSENSBASIS FÜR (BUTTONS)
+    # 1. SCHRITT: NUTZUNG DER WISSENSBASIS FÜR (BUTTONS) [cite: 15, 21]
     st.subheader("Nutzung der Wissensbasis für:")
     
-    if nutzer_rolle == "Besucher":
+    if nutzer_rolle == "Besucher": [cite: 2, 53]
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("ℹ️ Ich brauche Hilfe."): 
-                button_prompt = "Was möchtest du wissen?"
+            if st.button("ℹ️ Ich brauche Hilfe."): [cite: 16]
+                button_prompt = "Was möchtest du wissen?" [cite: 23]
                 gewaehlte_aktion = "Hilfe"
         with col2:
-            if st.button("⚠️ Es gibt eine Störung."): 
-                button_prompt = "Was ist passiert?"
+            if st.button("⚠️ Es gibt eine Störung."): [cite: 17]
+                button_prompt = "Was ist passiert?" [cite: 24]
                 gewaehlte_aktion = "Störung"
     else:
         col1, col2, col3 = st.columns(3)
         col4, col5 = st.columns(2)
         with col1:
-            if st.button("ℹ️ Ich brauche Hilfe."): 
-                button_prompt = "Was möchtest du wissen?"
+            if st.button("ℹ️ Ich brauche Hilfe."): [cite: 16]
+                button_prompt = "Was möchtest du wissen?" [cite: 23]
                 gewaehlte_aktion = "Hilfe"
         with col2:
-            if st.button("⚠️ Es gibt eine Störung."): 
-                button_prompt = "Was ist passiert?"
+            if st.button("⚠️ Es gibt eine Störung."): [cite: 17]
+                button_prompt = "Was ist passiert?" [cite: 24]
                 gewaehlte_aktion = "Störung"
         with col3:
-            if st.button("📊 Ich benötige einen Bericht."): 
-                button_prompt = "Nenne mir bitte den Zeitraum und das Thema."
+            if st.button("📊 Ich benötige einen Bericht."): [cite: 18]
+                button_prompt = "Nenne mir bitte den Zeitraum und das Thema." [cite: 26]
                 gewaehlte_aktion = "Bericht"
         with col4:
-            if st.button("📝 Ich habe neue Informationen."): 
-                button_prompt = "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu."
+            if st.button("📝 Ich habe neue Informationen."): [cite: 19]
+                button_prompt = "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu." [cite: 27]
                 gewaehlte_aktion = "Information"
         with col5:
-            if st.button("🛠️ Ich möchte eine Änderung am XLS vornehmen."): 
-                button_prompt = "Beschreibe deine Änderung so genau wie möglich."
+            if st.button("🛠️ Ich möchte eine Änderung am XLS vornehmen."): [cite: 20]
+                button_prompt = "Beschreibe deine Änderung so genau wie möglich." [cite: 28]
                 gewaehlte_aktion = "Änderung"
 
-    # 2. SCHRITT: DROP-DOWN AUSWAHL ZUR UNTERSTÜTZUNG (DARUNTER)
+    # 2. SCHRITT: DROP-DOWN AUSWAHL ZUR UNTERSTÜTZUNG (DARUNTER) [cite: 38]
     st.write("")
     kategorie_auswahl = st.selectbox(
         "Verständnishilfe (Auswahl filtert die Liste der Bezeichnungen):",
-        ["Alle Einträge", "Geräte / Ausst. innen", "Geräte / Ausst. außen", "Systeme"]
+        ["Alle Einträge", "Geräte / Ausst. innen", "Geräte / Ausst. außen", "Systeme"] [cite: 30, 31]
     )
     
     # 3. SCHRITT: ANZEIGE DER BEZEICHNUNGEN
@@ -181,12 +203,12 @@ if nutzer_rolle != "Bitte auswählen...":
         
         kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
         try:
-            response = model.generate_content(
+            antwort_text = generate_ki_response(
                 f"SYSTEM-BEFEHL: Der Nutzer hat den Button für '{gewaehlte_aktion}' gedrückt. "
                 f"Antworte ihm exakt mit der Spezifikations-Gegenfrage: '{button_prompt}'. "
                 f"Gib keine weiteren Erklärungen ab, sondern warte auf seine Eingabe zum Bereich '{kategorie_auswahl}'. {kontext}"
             )
-            st.session_state.messages.append({"role": "assistant", "content": response.text})
+            st.session_state.messages.append({"role": "assistant", "content": antwort_text})
             st.rerun()
         except Exception as e:
             st.error(f"Fehler bei der Verarbeitung: {e}")
@@ -209,16 +231,16 @@ if prompt := st.chat_input("Wie kann ich helfen? (z.B. 'Frage: Wo ist der Hauptw
                 st.cache_data.clear()
                 df_wissen, _ = load_data_from_drive()
 
-        # KI-Antwort generieren
+        # KI-Antwort generieren via stabiler Wrapper-Funktion
         kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
         with st.chat_message("assistant"):
             try:
-                response = model.generate_content(
+                antwort_text = generate_ki_response(
                     f"SYSTEM-KONTEXT: Der Nutzer tippt in der Rolle '{nutzer_rolle}'. "
                     f"Ausgewählter Bereich im HMI: '{kategorie_auswahl if 'kategorie_auswahl' in locals() else 'Alle Einträge'}'.\n"
                     f"Anfrage: {prompt} {kontext}"
                 )
-                st.markdown(response.text)
-                st.session_state.messages.append({"role": "assistant", "content": response.text})
+                st.markdown(antwort_text)
+                st.session_state.messages.append({"role": "assistant", "content": antwort_text})
             except Exception as e:
                 st.error(f"Fehler bei der KI-Verarbeitung: {e}")
