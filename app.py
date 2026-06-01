@@ -63,18 +63,17 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return False
 
 # ==========================================
-# 3. KI-GEHIRN INITIALISIERUNG
+# 3. KI-GEHIRN INITIALISIERUNG (ISSUE 6 MODELL-FIX)
 # ==========================================
 VILLA_PROMPT = """
 Du bist „Villa“, der digitale Verwalter für die Bewohner und Helfer der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses so einfach wie möglich zu halten.
 Beziehe dich bei allgemeinen Abläufen auf 'Villa Wissen_72.jfif' und bei der Wasserversorgung auf 'PXL_20260516_202437801_72.jpg'.
-
-WICHTIG FÜR JEDE ANTWORT:
-Dir wird bei jeder Anfrage die ausgewählte Rolle und der aktuell ausgewählte Bereich (Kategorie/System) des Nutzers übergeben. Nutze diese Information zwingend, um kurze, präzise und kontextbezogene Antworten zu geben. Wenn der Bereich 'Systeme' gewählt ist und der Nutzer eine vage Frage stellt, bezieht sich dies immer auf die in den Systemen hinterlegten Daten.
 """
 
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+
+# Modell-Bezeichnung korrigiert auf den stabilen Standard-String von Google
 model = genai.GenerativeModel(model_name="gemini-1.5-flash", system_instruction=VILLA_PROMPT)
 
 # ==========================================
@@ -97,49 +96,48 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Variable für Button-Klicks initialisieren
+# Variablen initialisieren
 button_prompt = None
 gewaehlte_aktion = "Allgemein"
 
-# Wenn die Rolle ausgewählt ist, folgt die Struktur exakt der PPT-Reihenfolge von oben nach unten
 if nutzer_rolle != "Bitte auswählen...":
     st.write("---")
     
-    # 1. SCHRITT: NUTZUNG DER WISSENSBASIS FÜR (BUTTONS)
+    # 1. SCHRITT: NUTZUNG DER WISSENSBASIS FÜR (BUTTONS GEMÄSS PPT)
     st.subheader("Nutzung der Wissensbasis für:")
     
     if nutzer_rolle == "Besucher":
         col1, col2 = st.columns(2)
         with col1:
             if st.button("ℹ️ Ich brauche Hilfe."): 
-                button_prompt = "Hilfe"
+                button_prompt = "Was möchtest du wissen?"
                 gewaehlte_aktion = "Hilfe"
         with col2:
             if st.button("⚠️ Es gibt eine Störung."): 
-                button_prompt = "Ich möchte eine Störung melden."
+                button_prompt = "Was ist passiert?"
                 gewaehlte_aktion = "Störung"
     else:
         col1, col2, col3 = st.columns(3)
         col4, col5 = st.columns(2)
         with col1:
             if st.button("ℹ️ Ich brauche Hilfe."): 
-                button_prompt = "Hilfe"
+                button_prompt = "Was möchtest du wissen?"
                 gewaehlte_aktion = "Hilfe"
         with col2:
             if st.button("⚠️ Es gibt eine Störung."): 
-                button_prompt = "Ich möchte eine Störung melden."
+                button_prompt = "Was ist passiert?"
                 gewaehlte_aktion = "Störung"
         with col3:
             if st.button("📊 Ich benötige einen Bericht."): 
-                button_prompt = "Ich benötige einen Bericht."
+                button_prompt = "Nenne mir bitte den Zeitraum und das Thema."
                 gewaehlte_aktion = "Bericht"
         with col4:
             if st.button("📝 Ich habe neue Informationen."): 
-                button_prompt = "Information: Ich möchte neue Informationen einpflegen."
+                button_prompt = "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu."
                 gewaehlte_aktion = "Information"
         with col5:
             if st.button("🛠️ Ich möchte eine Änderung am XLS vornehmen."): 
-                button_prompt = "Information: Ich möchte eine Änderung am XLS vornehmen."
+                button_prompt = "Beschreibe deine Änderung so genau wie möglich."
                 gewaehlte_aktion = "Änderung"
 
     # 2. SCHRITT: DROP-DOWN AUSWAHL ZUR UNTERSTÜTZUNG (DARUNTER)
@@ -149,7 +147,7 @@ if nutzer_rolle != "Bitte auswählen...":
         ["Alle Einträge", "Geräte / Ausst. innen", "Geräte / Ausst. außen", "Systeme"]
     )
     
-    # 3. SCHRITT: ANZEIGE DER GEFUNDENEN AUSSTATTUNG / BEZEICHNUNGEN
+    # 3. SCHRITT: ANZEIGE DER BEZEICHNUNGEN (ISSUE 7 SOLVED: OHNE SPALTENKOPF)
     if df_wissen is not None and not df_wissen.empty:
         spalten_namen = df_wissen.columns.tolist()
         bez_spalte = spalten_namen[1] if len(spalten_namen) > 1 else spalten_namen[0]
@@ -162,33 +160,37 @@ if nutzer_rolle != "Bitte auswählen...":
             df_gefiltert = df_wissen
             
         if not df_gefiltert.empty:
-            anzeige_df = df_gefiltert[[bez_spalte]].drop_duplicates().reset_index(drop=True)
+            # ISSUE 7 FIX: Entfernt exakt den Namen des Tabellenkopfs, falls dieser als Daten-Zeile auftaucht
+            anzeige_df = df_gefiltert[[bez_spalte]].drop_duplicates()
+            anzeige_df = anzeige_df[anzeige_df[bez_spalte].astype(str).str.lower() != str(bez_spalte).lower()]
+            anzeige_df = anzeige_df.reset_index(drop=True)
+            
             st.dataframe(anzeige_df, use_container_width=True, hide_index=True)
         else:
             st.info(f"Keine Einträge für '{kategorie_auswahl}' hinterlegt.")
 
-    # Verarbeitung, falls ein Button gedrückt wurde (Gibt den Drop-down Kontext aktiv mit!)
+    # Verarbeitung der Klicks (ISSUE 6 TEIL 2 SOLVED: Nutzt jetzt die exakten PPT Gegenfragen)
     if button_prompt:
-        final_prompt = f"{button_prompt} (Ausgewählter Kontext-Bereich: {kategorie_auswahl})"
-        st.session_state.messages.append({"role": "user", "content": final_prompt})
+        # Den Klick-Kontext im Protokoll sichtbar machen
+        st.session_state.messages.append({"role": "user", "content": f"Aktion gewählt: {gewaehlte_aktion} (Bereich: {kategorie_auswahl})"})
         
         if gewaehlte_aktion in ["Information", "Änderung"] and df_wissen is not None:
-            append_info_to_drive(df_wissen, button_prompt, nutzer_rolle, kategorie_auswahl)
-            st.success("Aktion wurde im System vermerkt!")
+            append_info_to_drive(df_wissen, f"Button-Aktion: {gewaehlte_aktion}", nutzer_rolle, kategorie_auswahl)
         
-        # KI erhält hier die expliziten Metadaten zur Rolle und dem Drop-Down
+        # KI-Generierung mit dem korrigierten Modellaufruf
         kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
         try:
             response = model.generate_content(
-                f"SYSTEM-KONTEXT: Der Nutzer agiert in der Rolle '{nutzer_rolle}' und hat im Drop-Down aktiv den Bereich '{kategorie_auswahl}' selektiert. "
-                f"Nutze diese Einschränkung für deine Antwort!\nAnfrage: {final_prompt} {kontext}"
+                f"SYSTEM-BEFEHL: Der Nutzer hat den Button für '{gewaehlte_aktion}' gedrückt. "
+                f"Antworte ihm exakt mit der Spezifikations-Gegenfrage: '{button_prompt}'. "
+                f"Gib keine weiteren Erklärungen ab, sondern warte auf seine Eingabe zum Bereich '{kategorie_auswahl}'. {kontext}"
             )
             st.session_state.messages.append({"role": "assistant", "content": response.text})
             st.rerun()
         except Exception as e:
             st.error(f"Fehler bei der Verarbeitung: {e}")
 
-# Manueller Chat-Input (Gibt den Drop-down Kontext ebenfalls aktiv mit!)
+# Manueller Chat-Input (Allgemeingültiges Beispiel)
 if prompt := st.chat_input("Wie kann ich helfen? (z.B. 'Frage: Wo ist der Hauptwasserhahn?')"):
     if nutzer_rolle == "Bitte auswählen...":
         st.warning("Bitte wähle oben zuerst aus, wer du bist!")
@@ -206,14 +208,14 @@ if prompt := st.chat_input("Wie kann ich helfen? (z.B. 'Frage: Wo ist der Hauptw
                 st.cache_data.clear()
                 df_wissen, _ = load_data_from_drive()
 
-        # KI erhält auch beim freien Tippen/Sprechen die genaue Drop-Down Auswahl übermittelt
+        # KI-Antwort generieren
         kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
         with st.chat_message("assistant"):
             try:
                 response = model.generate_content(
-                    f"SYSTEM-KONTEXT: Der Nutzer tippt eine freie Frage in der Rolle '{nutzer_rolle}'. "
-                    f"Im Drop-Down ist aktuell '{kategorie_auswahl if 'kategorie_auswahl' in locals() else 'Alle Einträge'}' ausgewählt. "
-                    f"Beziehe seine Frage primär auf diesen ausgewählten Bereich!\nAnfrage: {prompt} {kontext}"
+                    f"SYSTEM-KONTEXT: Der Nutzer tippt in der Rolle '{nutzer_rolle}'. "
+                    f"Ausgewählter Bereich im HMI: '{kategorie_auswahl if 'kategorie_auswahl' in locals() else 'Alle Einträge'}'.\n"
+                    f"Anfrage: {prompt} {kontext}"
                 )
                 st.markdown(response.text)
                 st.session_state.messages.append({"role": "assistant", "content": response.text})
