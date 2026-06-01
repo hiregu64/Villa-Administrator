@@ -63,7 +63,7 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return False
 
 # ==========================================
-# 3. KI-GEHIRN INITIALISIERUNG (ISSUE 6 MODELL-FIX)
+# 3. KI-GEHIRN INITIALISIERUNG (FIX FÜR ISSUE 8)
 # ==========================================
 VILLA_PROMPT = """
 Du bist „Villa“, der digitale Verwalter für die Bewohner und Helfer der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses so einfach wie möglich zu halten.
@@ -73,8 +73,12 @@ Beziehe dich bei allgemeinen Abläufen auf 'Villa Wissen_72.jfif' und bei der Wa
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-# Modell-Bezeichnung korrigiert auf den stabilen Standard-String von Google
-model = genai.GenerativeModel(model_name="gemini-1.5-flash", system_instruction=VILLA_PROMPT)
+try:
+    # ERSTE STRATEGIE: Verwende den offiziellen Standard-String ohne "models/" Präfix
+    model = genai.GenerativeModel(model_name="gemini-1.5-flash", system_instruction=VILLA_PROMPT)
+except Exception:
+    # ZWEITE STRATEGIE: Falls die installierte Bibliotheksversion das Präfix erzwingt
+    model = genai.GenerativeModel(model_name="models/gemini-1.5-flash", system_instruction=VILLA_PROMPT)
 
 # ==========================================
 # 4. BENUTZEROBERFLÄCHE (STREAMLIT UI)
@@ -103,7 +107,7 @@ gewaehlte_aktion = "Allgemein"
 if nutzer_rolle != "Bitte auswählen...":
     st.write("---")
     
-    # 1. SCHRITT: NUTZUNG DER WISSENSBASIS FÜR (BUTTONS GEMÄSS PPT)
+    # 1. SCHRITT: NUTZUNG DER WISSENSBASIS FÜR (BUTTONS)
     st.subheader("Nutzung der Wissensbasis für:")
     
     if nutzer_rolle == "Besucher":
@@ -147,7 +151,7 @@ if nutzer_rolle != "Bitte auswählen...":
         ["Alle Einträge", "Geräte / Ausst. innen", "Geräte / Ausst. außen", "Systeme"]
     )
     
-    # 3. SCHRITT: ANZEIGE DER BEZEICHNUNGEN (ISSUE 7 SOLVED: OHNE SPALTENKOPF)
+    # 3. SCHRITT: ANZEIGE DER BEZEICHNUNGEN
     if df_wissen is not None and not df_wissen.empty:
         spalten_namen = df_wissen.columns.tolist()
         bez_spalte = spalten_namen[1] if len(spalten_namen) > 1 else spalten_namen[0]
@@ -160,7 +164,6 @@ if nutzer_rolle != "Bitte auswählen...":
             df_gefiltert = df_wissen
             
         if not df_gefiltert.empty:
-            # ISSUE 7 FIX: Entfernt exakt den Namen des Tabellenkopfs, falls dieser als Daten-Zeile auftaucht
             anzeige_df = df_gefiltert[[bez_spalte]].drop_duplicates()
             anzeige_df = anzeige_df[anzeige_df[bez_spalte].astype(str).str.lower() != str(bez_spalte).lower()]
             anzeige_df = anzeige_df.reset_index(drop=True)
@@ -169,15 +172,13 @@ if nutzer_rolle != "Bitte auswählen...":
         else:
             st.info(f"Keine Einträge für '{kategorie_auswahl}' hinterlegt.")
 
-    # Verarbeitung der Klicks (ISSUE 6 TEIL 2 SOLVED: Nutzt jetzt die exakten PPT Gegenfragen)
+    # Verarbeitung der Klicks
     if button_prompt:
-        # Den Klick-Kontext im Protokoll sichtbar machen
         st.session_state.messages.append({"role": "user", "content": f"Aktion gewählt: {gewaehlte_aktion} (Bereich: {kategorie_auswahl})"})
         
         if gewaehlte_aktion in ["Information", "Änderung"] and df_wissen is not None:
             append_info_to_drive(df_wissen, f"Button-Aktion: {gewaehlte_aktion}", nutzer_rolle, kategorie_auswahl)
         
-        # KI-Generierung mit dem korrigierten Modellaufruf
         kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
         try:
             response = model.generate_content(
@@ -190,7 +191,7 @@ if nutzer_rolle != "Bitte auswählen...":
         except Exception as e:
             st.error(f"Fehler bei der Verarbeitung: {e}")
 
-# Manueller Chat-Input (Allgemeingültiges Beispiel)
+# Manueller Chat-Input
 if prompt := st.chat_input("Wie kann ich helfen? (z.B. 'Frage: Wo ist der Hauptwasserhahn?')"):
     if nutzer_rolle == "Bitte auswählen...":
         st.warning("Bitte wähle oben zuerst aus, wer du bist!")
