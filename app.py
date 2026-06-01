@@ -1,5 +1,6 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -63,39 +64,32 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return False
 
 # ==========================================
-# 3. KI-GEHIRN INITIALISIERUNG
+# 3. KI-GEHIRN INITIALISIERUNG (NEUES GOOGLE-GENAI SDK)
 # ==========================================
 VILLA_PROMPT = """
 Du bist „Villa“, der digitale Verwalter für die Bewohner und Helfer der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses so einfach wie möglich zu halten.
 Beziehe dich bei allgemeinen Abläufen auf 'Villa Wissen_72.jfif' und bei der Wasserversorgung auf 'PXL_20260516_202437801_72.jpg'.
 """
 
+client = None
 if "GEMINI_API_KEY" in st.secrets:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-
-try:
-    model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
-        system_instruction=VILLA_PROMPT
-    )
-except Exception:
-    model = genai.GenerativeModel(
-        model_name="models/gemini-1.5-flash",
-        system_instruction=VILLA_PROMPT
-    )
+    # Der neue genai.Client nutzt automatisch das stabile API-Protokoll v1
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 def generate_ki_response(prompt_text):
+    if client is None:
+        return "KI-Dienst nicht konfiguriert (API Key fehlt)."
     try:
-        return model.generate_content(prompt_text).text
-    except Exception as e:
-        try:
-            res = genai.generate_text(
-                model="models/gemini-1.5-flash",
-                prompt=f"{VILLA_PROMPT}\n\nAnfrage:\n{prompt_text}"
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt_text,
+            config=types.GenerateContentConfig(
+                system_instruction=VILLA_PROMPT
             )
-            return res.result
-        except Exception:
-            raise e
+        )
+        return response.text
+    except Exception as e:
+        raise e
 
 # ==========================================
 # 4. BENUTZEROBERFLÄCHE (STREAMLIT UI)
@@ -109,7 +103,7 @@ nutzer_rolle = st.selectbox("Wer bist du?", ["Bitte auswählen...", "Besucher", 
 if "messages" not in st.session_state:
     st.session_state.messages = [{
         "role": "assistant", 
-        "content": "Hallo! Ich bin „Villa Barsinghausen“ – dein digitaler Verwalter. ☀️ Nutze gerne dein Tastatur-Mikrofon!\n\nWähle oben deine Rolle aus, um zu beginnen."
+        "content": "Hallo! Ich bin „Villa“ – dein digitaler Verwalter. ☀️ Nutze gerne dein Tastatur-Mikrofon!\n\nWähle oben deine Rolle aus, um zu beginnen."
     }]
 
 # Chat-Verlauf anzeigen
