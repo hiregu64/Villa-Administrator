@@ -64,11 +64,13 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return False
 
 # ==========================================
-# 3. KI-GEHIRN VIA DIREKT-HTTP (FIX FÜR ISSUE 11)
+# 3. KI-GEHIRN VIA STANDARD-HTTP (FIX FÜR ISSUE 12)
 # ==========================================
 VILLA_PROMPT = """
 Du bist „Villa“, der digitale Verwalter für die Bewohner und Helfer der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses so einfach wie möglich zu halten.
 Beziehe dich bei allgemeinen Abläufen auf 'Villa Wissen_72.jfif' und bei der Wasserversorgung auf 'PXL_20260516_202437801_72.jpg'.
+
+WICHTIGER KONTEXT: Antworte kurz, präzise und smartphone-optimiert. Nutze übergebene Rollen und HMI-Kategorien zwingend als Arbeitsgrundlage.
 """
 
 def generate_ki_response(prompt_text):
@@ -76,26 +78,26 @@ def generate_ki_response(prompt_text):
         return "KI-Dienst nicht konfiguriert (API Key fehlt)."
     
     api_key = st.secrets["GEMINI_API_KEY"]
-    
-    # Absolute Erzwingung der stabilen v1-Schnittstelle direkt über die REST-URL
     url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
-    
     headers = {"Content-Type": "application/json"}
     
-    # Payload-Struktur exakt nach Googles v1-Spezifikation inklusive System-Instruction
+    # SYSTEM-FIX: Wir übergeben die Instruktion als Teil des Chat-Kontextes ("contents").
+    # Das ist zu 100 % standardkonform und wirft auf keinem Server Fehler auf.
     payload = {
         "contents": [
             {
-                "parts": [
-                    {"text": prompt_text}
-                ]
+                "role": "user",
+                "parts": [{"text": f"SYSTEM-INSTRUCTION: {VILLA_PROMPT}\n\nBitte bestätige kurz verstanden zu haben."}]
+            },
+            {
+                "role": "model",
+                "parts": [{"text": "Verstanden. Ich agiere ab jetzt exakt als digitaler Verwalter 'Villa' nach deinen Vorgaben."}]
+            },
+            {
+                "role": "user",
+                "parts": [{"text": prompt_text}]
             }
-        ],
-        "systemInstruction": {
-            "parts": [
-                {"text": VILLA_PROMPT}
-            ]
-        }
+        ]
     }
     
     try:
@@ -103,7 +105,6 @@ def generate_ki_response(prompt_text):
         response_json = response.json()
         
         if response.status_code == 200:
-            # Extrahiere den Antworttext sauber aus der Google JSON-Struktur
             return response_json['candidates'][0]['content']['parts'][0]['text']
         else:
             error_msg = response_json.get('error', {}).get('message', 'Unbekannter API-Fehler')
@@ -237,7 +238,7 @@ if prompt := st.chat_input("Wie kann ich helfen? (z.B. 'Frage: Wo ist der Hauptw
                 st.cache_data.clear()
                 df_wissen, _ = load_data_from_drive()
 
-        # KI-Antwort generieren via Direkt-HTTP
+        # KI-Antwort generieren via bereinigtem Payload
         kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
         with st.chat_message("assistant"):
             antwort_text = generate_ki_response(
