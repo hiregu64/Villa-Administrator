@@ -30,7 +30,14 @@ def load_data_from_drive():
             status, done = downloader.next_chunk()
             
         fh.seek(0)
-        return pd.read_excel(fh), service
+        df = pd.read_excel(fh)
+        
+        # VERZEICHNIS-LOGIK (Issue 28): Leere Zellen in Spalte A (Kategorie) 
+        # automatisch mit der jeweils darüberliegenden Überschrift auffüllen
+        if df is not None and not df.empty:
+            df.iloc[:, 0] = df.iloc[:, 0].ffill()
+            
+        return df, service
     except Exception as e:
         st.error(f"Fehler bei der Verbindung zur Google Drive Wissensbasis: {e}")
         return None, None
@@ -77,7 +84,7 @@ WICHTIGER KONTEXT & VERHALTEN:
 - Antworte immer kurz, präzise und smartphone-optimiert.
 - Nutze die vom HMI übergebene Rolle und die gewählte Kategorie/Bezeichnung zwingend als Arbeitsgrundlage.
 - Wenn das HMI dir eine konkrete Bezeichnung (z. B. "Beregnungssystem") übergibt, beziehe dich exakt darauf.
-- Wenn das HMI KEINE konkrete Bezeichnung übergibt (weil der Nutzer das Drop-down ignoriert hat), musst du anhand der Frage des Nutzers logisch nachdenken und den Kontext selbstständig der passenden Kategorie (Systeme, Geräte innen, Geräte außen) zuordnen.
+- Wenn das HMI KEINE konkrete Bezeichnung übergibt (weil der Nutzer das Drop-down ignoriert hat), musst du anhand der Frage des Nutzers logisch nachdenken und den Kontext selbstständig der passenden Kategorie (Systeme, Ausstattung innen, Ausstattung außen) zuordnen.
 """
 
 @st.cache_resource
@@ -140,7 +147,7 @@ if "aktive_frage" not in st.session_state:
 if "vorherige_rolle" not in st.session_state:
     st.session_state.vorherige_rolle = "Bitte auswählen..."
 
-# Callback: Setzt die Drop-downs auf ihren Standardwert zurück (Issue 16 / 27 Lösung)
+# Callback: Setzt die Drop-downs auf ihren Standardwert zurück
 def reset_dropdown_states():
     for key in list(st.session_state.keys()):
         if key.startswith("sub_cat_wahl_"):
@@ -167,7 +174,7 @@ if nutzer_rolle != "Bitte auswählen...":
     st.write("---")
     st.subheader("Mein Anliegen:")
     
-    # Grid für Buttons (Issue 19 & 23: Sofortiges, farbiges Feedback dank direktem Callback)
+    # Grid für Buttons (Farbliche Kennzeichnung via type="primary")
     if nutzer_rolle == "Besucher":
         col1, col2 = st.columns(2)
         with col1:
@@ -203,41 +210,40 @@ if nutzer_rolle != "Bitte auswählen...":
                       on_click=on_button_click, args=("Änderung", "Beschreibe deine Änderung so genau wie möglich."))
 
     # ==========================================
-    # 5. DIALOG-REIHENFOLGE NACH ISSUE 20 & 21 & 25
+    # 5. DIALOG-REIHENFOLGE (NEUE KATEGORIEN-NAMEN)
     # ==========================================
     if st.session_state.aktive_aktion:
         st.write("")
-        # 1. Spezifische Gegenfrage (Issue 20 & 26: Ändert sich jetzt garantiert mit jedem Klick sofort)
+        # 1. Spezifische Gegenfrage (Wechselt jetzt garantiert sofort mit jedem Button-Klick)
         st.info(f"**Villa Avatar:** {st.session_state.aktive_frage}\n\n*Nutze vielleicht eines der Drop-downs unten, um mir konkret das betreffende Thema zu nennen.*")
         
-        # Bestimme sichtbare Kategorien pro Rolle
+        # Bestimme sichtbare Kategorien pro Rolle (Exakte Benennung nach XLS-Update)
         kategorien_fuer_rolle = []
         if nutzer_rolle == "Besucher":
-            kategorien_fuer_rolle = ["Geräte / Ausst. innen", "Geräte / Ausst. außen"]
+            kategorien_fuer_rolle = ["Ausstattung innen", "Ausstattung außen"]
         elif nutzer_rolle in ["Eigentümer", "Administrator"]:
-            kategorien_fuer_rolle = ["Systeme", "Geräte / Ausst. innen", "Geräte / Ausst. außen"]
-        else:
-            kategorien_fuer_rolle = ["Systeme", "Geräte / Ausst. außen"]
+            kategorien_fuer_rolle = ["Systeme", "Ausstattung innen", "Ausstattung außen"]
+        else: # Handwerker/Helfer
+            kategorien_fuer_rolle = ["Systeme", "Ausstattung außen"]
 
         konkrete_auswahlen = {}
         
         if df_wissen is not None and not df_wissen.empty:
-            spalten = df_wissen.columns.tolist()
-            kat_spalte = spalten[0]
-            bez_spalte = spalten[1] if len(spalten) > 1 else spalten[0]
+            # Spalte 0 = Kategorie (z.B. Systeme), Spalte 1 = Bezeichnung (z.B. Beregnungssystem)
+            kat_spalte = df_wissen.columns[0]
+            bez_spalte = df_wissen.columns[1] if len(df_wissen.columns) > 1 else df_wissen.columns[0]
 
             for kat in kategorien_fuer_rolle:
-                # Daten aus Excel filtern
-                suchbegriff = kat.replace(" ", "").lower()
-                mask = df_wissen[kat_spalte].astype(str).str.replace(" ", "").str.lower().str.contains(suchbegriff)
+                # Filtere alle Bezeichnungen heraus, die dank .ffill() nun sauber dieser Kategorie zugeordnet sind
+                mask = df_wissen[kat_spalte].astype(str).str.strip() == kat
                 verfuegbare_bezeichnungen = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
-                verfuegbare_bezeichnungen = sorted([str(b) for b in verfuegbare_bezeichnungen])
+                verfuegbare_bezeichnungen = sorted([str(b).strip() for b in verfuegbare_bezeichnungen])
                 
-                # Standardwert ist der Name der Kategorie
+                # Default-Option in der Box ist der Name der Kategorie selbst
                 dropdown_optionen = [kat] + verfuegbare_bezeichnungen
                 
-                # Issue 21 & 25 & 27: Absoluter "No-Line-Look" via collapsed. 
-                # Die Drop-downs lassen sich jetzt fehlerfrei aufklappen, Werte wählen und fixieren!
+                # Issue 21 & 25 & 27 gelöst: Absoluter No-Line-Look. 
+                # Lässt sich perfekt aufklappen, scrollen, auswählen und fixieren.
                 wahl = st.selectbox(
                     label=f"Hidden_Label_{kat}", 
                     options=dropdown_optionen,
@@ -245,7 +251,7 @@ if nutzer_rolle != "Bitte auswählen...":
                     label_visibility="collapsed"
                 )
                 
-                # Wenn etwas ausgewählt wurde (nicht mehr der Standard-Kategorietext)
+                # Wenn der Nutzer etwas Konkretes gewählt hat (ungleich dem Kategorie-Standardwert)
                 if wahl != kat:
                     konkrete_auswahlen[kat] = wahl
 
@@ -253,7 +259,7 @@ if nutzer_rolle != "Bitte auswählen...":
 # 6. CHAT-ANZEIGE UND MANUELLER INPUT
 # ==========================================
 st.write("---")
-# Chat-Verlauf rendern (Ohne Müllzeilen, rein funktional)
+# Chat-Verlauf rendern
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -274,7 +280,7 @@ if prompt := st.chat_input("Wie kann ich helfen? (z.B. 'Frage: Wo ist der Hauptw
             reiner_text = prompt.split(":", 1)[1].strip()
             kat_text = ", ".join(konkrete_auswahlen.keys()) if 'konkrete_auswahlen' in locals() and konkrete_auswahlen else "Allgemein"
             with st.spinner("Speichere Update direkt in Google Drive..."):
-                erfolg = append_info_to_drive(df_wissen, reiner_text, nutzername=nutzer_rolle, kategorie=kat_text)
+                erfolg = append_info_to_drive(df_wissen, reiner_text, nutzer_rolle, kat_text)
             if erfolg:
                 st.success("Eintrag erfolgreich in Google Drive gespeichert!")
                 st.cache_data.clear()
