@@ -126,7 +126,6 @@ def generate_ki_response(prompt_text):
 # ==========================================
 st.set_page_config(page_title="Villa Avatar", page_icon="☀️", layout="centered")
 
-# Styling-Bereich erweitert um Issue 52 (Ausgewählte Buttons in zartem Blau)
 st.markdown("""
     <style>
     div[data-testid="stSelectbox"] div[data-baseweb="select"] { font-weight: bold; font-size: 15px; }
@@ -146,7 +145,7 @@ st.markdown("""
         text-align: right !important;
     }
     
-    /* Issue 52 gelöst: Primary-Buttons (ausgewählt) von Rot in ein zartes Blau umfärben */
+    /* Ausgewählte Buttons in zartem Blau */
     button[data-testid="stBaseButton-primary"] {
         background-color: #e1f5fe !important;
         color: #0288d1 !important;
@@ -222,17 +221,18 @@ if nutzer_rolle != st.session_state.vorherige_rolle:
 if nutzer_rolle is not None:
     st.write("---")
     
-    # Issue 53 gelöst: Das Benutzer-Icon erstrahlt nun in einem zarten Grün (#e8f5e9) mit waldgrüner Linienführung (#2e7d32)
+    # Issue 54 gelöst: Exakte Rekonstruktion des originalen roten Avatars (inklusive Haarlinie), eingefärbt in Grün (#2e7d32)
     with st.container():
         st.markdown(
             "<div style='display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 10px;'>"
             "<span style='font-weight: bold; font-size: 1.2rem; font-family: inherit;'>Mein Anliegen:</span>"
-            "<div style='width: 32px; height: 32px; background-color: #e8f5e9; border-radius: 8px; display: flex; align-items: center; justify-content: center; border: 1px solid #c8e6c9;'>"
-            "<svg viewBox='0 0 24 24' width='20' height='20' stroke='#2e7d32' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'>"
+            "<div style='width: 32px; height: 32px; background-color: #2e7d32; border-radius: 8px; display: flex; align-items: center; justify-content: center;'>"
+            "<svg viewBox='0 0 24 24' width='22' height='22' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>"
             "<circle cx='12' cy='12' r='10'></circle>"
             "<path d='M8 14s1.5 2 4 2 4-2 4-2'></path>"
-            "<line x1='9' y1='9' x2='9.01' y2='9'></line>"
-            "<line x1='15' y1='9' x2='15.01' y2='9'></line>"
+            "<circle cx='9' cy='9' r='1' fill='white'></circle>"
+            "<circle cx='15' cy='9' r='1' fill='white'></circle>"
+            "<path d='M7.5 9.5c1.5-2 3.5-2.5 4.5-2.5s3 .5 4.5 2.5'></path>"
             "</svg>"
             "</div>"
             "</div>", 
@@ -337,25 +337,3 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         with st.chat_message("user"):
             st.markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
-        
-        gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if 'konkrete_auswahlen' in locals() and konkrete_auswahlen else ""
-        
-        if st.session_state.aktive_aktion == "Information" and df_wissen is not None:
-            kat_text = ", ".join(konkrete_auswahlen.keys()) if konkrete_auswahlen else "Allgemein"
-            with st.spinner("Eintrag wird in Google Drive gespeichert..."):
-                append_info_to_drive(df_wissen, prompt, nutzer_rolle, kat_text)
-                st.cache_data.clear()
-                df_wissen, _ = load_data_from_drive()
-
-        kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
-        
-        with st.chat_message("assistant"):
-            with st.spinner("Villa Avatar überlegt..."):
-                antwort_text = generate_ki_response(
-                    f"Rolle: {nutzer_rolle}\n"
-                    f"Kontext-Aktion des Nutzers: {st.session_state.aktive_aktion}\n"
-                    f"Gewähltes HMI-Objekt: {gewaehltes_objekt}\n"
-                    f"Anfrage: {prompt} {kontext}"
-                )
-            st.markdown(antwort_text)
-            st.session_state.messages.append({"role": "assistant", "content": antwort_text})
