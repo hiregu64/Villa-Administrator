@@ -114,7 +114,7 @@ def generate_ki_response(prompt_text):
             return f"Fehler bei der KI-Verarbeitung: {e}"
 
 # ==========================================
-# 4. BENUTZEROBERFLÄCHE (HMI) & MESSENGER-STYLING
+# 4. BENUTZEROBERFLÄCHE (HMI) & STYLING
 # ==========================================
 st.set_page_config(page_title="Villa Avatar", page_icon="☀️", layout="centered")
 
@@ -139,7 +139,39 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("☀️ Villa Avatar")
-st.markdown("Hallo! Ich bin Villa Avatar, dein digitaler **'Helfer'**! Wähle unten die Rolle aus, um zu beginnen.")
+st.markdown("Hallo! Ich bin Villa Avatar, dein digitaler **'Helfer'**!")
+
+# ==========================================
+# 5. DIE EXAKTE HMI-ZUSTANDSMATRIX (NACH PPT SEITE 2)
+# ==========================================
+# Hier sind alle Instanzen exakt, statisch und fehlerfrei aus der PPT hinterlegt.
+HMI_MATRIX = {
+    "Besucher": {
+        "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": ["Ausstattung innen", "Ausstattung außen"]},
+        "Störung": {"text": "Was ist passiert?", "dd": ["Ausstattung innen", "Ausstattung außen"]}
+    },
+    "Eigentümer": {
+        "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": ["Ausstattung innen", "Ausstattung außen"]},
+        "Information": {"text": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]},
+        "Störung": {"text": "Was ist passiert?", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]},
+        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]},
+        "Änderung": {"text": "Beschreibe deine Änderung so genau wie möglich.", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]}
+    },
+    "Administrator": {
+        "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": ["Ausstattung innen", "Ausstattung außen"]},
+        "Information": {"text": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]},
+        "Störung": {"text": "Was ist passiert?", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]},
+        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]},
+        "Änderung": {"text": "Beschreibe deine Änderung so genau wie möglich.", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]}
+    },
+    "Handwerker/Helfer": {
+        "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": ["Ausstattung innen", "Ausstattung außen"]},
+        "Information": {"text": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.", "dd": ["Systeme", "Ausstattung außen"]},
+        "Störung": {"text": "Was ist passiert?", "dd": ["Systeme", "Ausstattung außen"]},
+        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": ["Systeme", "Ausstattung außen"]},
+        "Änderung": {"text": "Beschreibe deine Änderung so genau wie möglich.", "dd": ["Systeme", "Ausstattung außen"]}
+    }
+}
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -148,23 +180,15 @@ if "aktive_aktion" not in st.session_state:
 if "vorherige_rolle" not in st.session_state:
     st.session_state.vorherige_rolle = "Bitte auswählen..."
 
-# Feste, unveränderliche Zuordnung der Fragetext-Gegenfragen laut PPT Seite 2
-TEXT_MATRIX = {
-    "Hilfe": "Wobei kann ich dir helfen?",
-    "Information": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.",
-    "Störung": "Was ist passiert?",
-    "Bericht": "Nenne mir bitte den Zeitraum und das Thema.",
-    "Änderung": "Beschreibe deine Änderung so genau wie möglich."
-}
-
 def clear_all_dropdown_selections():
     for key in list(st.session_state.keys()):
         if key.startswith("sub_cat_wahl_"):
             del st.session_state[key]
 
+# 1. Schritt: Rollenauswahl
 nutzer_rolle = st.selectbox("Wer bist du?", ["Bitte auswählen...", "Besucher", "Eigentümer", "Administrator", "Handwerker/Helfer"])
 
-# Sofortiger Reset bei Wechsel der Benutzerrolle (Issue 29)
+# Dynamik bei Änderung der Rolle weiter oben umsetzen
 if nutzer_rolle != st.session_state.vorherige_rolle:
     st.session_state.vorherige_rolle = nutzer_rolle
     st.session_state.aktive_aktion = None
@@ -176,7 +200,7 @@ if nutzer_rolle != "Bitte auswählen...":
     st.write("---")
     st.subheader("Mein Anliegen:")
     
-    # Issue 37 gelöst: Präzise, voneinander getrennte State-Zuweisung pro Button-Klick
+    # 2. Schritt: Buttons rendern je nach Rolle
     if nutzer_rolle == "Besucher":
         col1, col2 = st.columns(2)
         with col1:
@@ -219,51 +243,44 @@ if nutzer_rolle != "Bitte auswählen...":
                 st.rerun()
 
     # ==========================================
-    # 5. DROPDOWN-MENÜS (MATRIZEN-FILTERUNG)
+    # 6. ABSOLUT SYNCHRONE GEGENFRAGEN & DROP-DOWNS
     # ==========================================
-    if st.session_state.aktive_aktion:
-        st.write("")
-        # Holt sich den Text jetzt dynamisch und absolut fehlerfrei aus der Zuordnungstabelle
-        aktueller_fragetext = TEXT_MATRIX.get(st.session_state.aktive_aktion, "Wie kann ich dir helfen?")
-        st.info(f"**Villa Avatar:** {aktueller_fragetext}")
+    # Hier ziehen wir die Instanzdaten direkt, ohne Logik-Verzögerung, aus der HMI_MATRIX
+    if st.session_state.aktive_aktion and nutzer_rolle in HMI_MATRIX:
+        aktiver_state = HMI_MATRIX[nutzer_rolle].get(st.session_state.aktive_aktion)
         
-        # Issue 36 gelöst: Bestimme sichtbare Drop-downs präzise nach PPT-Vorgabe
-        kategorien_fuer_rolle = []
-        if st.session_state.aktive_aktion == "Hilfe":
-            # "Ich brauche Hilfe" bietet IMMER nur Ausstattung innen & außen an
-            kategorien_fuer_rolle = ["Ausstattung innen", "Ausstattung außen"]
-        else:
-            # Alle anderen Aktionen filtern basierend auf der angemeldeten Rolle
-            if nutzer_rolle == "Handwerker/Helfer":
-                kategorien_fuer_rolle = ["Systeme", "Ausstattung außen"]
-            else:
-                kategorien_fuer_rolle = ["Systeme", "Ausstattung innen", "Ausstattung außen"]
+        if aktiver_state:
+            st.write("")
+            # Issue 33 & 35 gelöst: Der Text MUSS jetzt zum gedrückten Button passen
+            st.info(f"**Villa Avatar:** {aktiver_state['text']}")
+            
+            # Issue 36 & 37 gelöst: Die Drop-downs sind fest an die Matrix gekoppelt
+            kategorien_fuer_rolle = aktiver_state["dd"]
+            konkrete_auswahlen = {}
+            
+            if df_wissen is not None and not df_wissen.empty:
+                kat_spalte = df_wissen.columns[0]
+                bez_spalte = df_wissen.columns[1] if len(df_wissen.columns) > 1 else df_wissen.columns[0]
 
-        konkrete_auswahlen = {}
-        
-        if df_wissen is not None and not df_wissen.empty:
-            kat_spalte = df_wissen.columns[0]
-            bez_spalte = df_wissen.columns[1] if len(df_wissen.columns) > 1 else df_wissen.columns[0]
-
-            for kat in kategorien_fuer_rolle:
-                mask = df_wissen[kat_spalte].astype(str).str.strip() == kat
-                verfuegbare_bezeichnungen = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
-                verfuegbare_bezeichnungen = sorted([str(b).strip() for b in verfuegbare_bezeichnungen])
-                
-                wahl = st.selectbox(
-                    label=f"Hidden_Label_{kat}", 
-                    options=verfuegbare_bezeichnungen,
-                    index=None,
-                    placeholder=kat,
-                    key=f"sub_cat_wahl_{kat}_{st.session_state.aktive_aktion}",
-                    label_visibility="collapsed"
-                )
-                
-                if wahl is not None:
-                    konkrete_auswahlen[kat] = wahl
+                for kat in kategorien_fuer_rolle:
+                    mask = df_wissen[kat_spalte].astype(str).str.strip() == kat
+                    verfuegbare_bezeichnungen = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
+                    verfuegbare_bezeichnungen = sorted([str(b).strip() for b in verfuegbare_bezeichnungen])
+                    
+                    wahl = st.selectbox(
+                        label=f"Hidden_Label_{kat}", 
+                        options=verfuegbare_bezeichnungen,
+                        index=None,
+                        placeholder=kat,
+                        key=f"sub_cat_wahl_{kat}_{st.session_state.aktive_aktion}",
+                        label_visibility="collapsed"
+                    )
+                    
+                    if wahl is not None:
+                        konkrete_auswahlen[kat] = wahl
 
 # ==========================================
-# 6. CHAT-ANZEIGE UND MANUELLER INPUT
+# 7. CHAT-ANZEIGE UND MANUELLER INPUT
 # ==========================================
 st.write("---")
 for message in st.session_state.messages:
@@ -280,7 +297,7 @@ if prompt := st.chat_input("Wie kann ich helfen?"):
             st.markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
         
-        gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if konkrete_auswahlen else ""
+        gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if 'konkrete_auswahlen' in locals() and konkrete_auswahlen else ""
         
         if st.session_state.aktive_aktion == "Information" and df_wissen is not None:
             kat_text = ", ".join(konkrete_auswahlen.keys()) if konkrete_auswahlen else "Allgemein"
