@@ -79,7 +79,7 @@ Du bist „Villa Avatar“, der digitale Helfer für die Bewohner und Helfer der
 Beziehe dich bei allgemeinen Abläufen auf 'Villa Wissen_72.jfif' und bei der Wasserversorgung auf 'PXL_20260516_202437801_72.jpg'.
 
 WICHTIGER KONTEXT & VERHALTEN:
-- Antworte immer kurz, präzise und smartphone-optimiert.
+- Antworte immer kurz, präzise and smartphone-optimiert.
 - Nutze die vom HMI übergebene Rolle und die gewählte Kategorie/Bezeichnung zwingend als Arbeitsgrundlage.
 - Wenn das HMI dir eine konkrete Bezeichnung (z. B. "Beregnungssystem") übergibt, beziehe dich exakt darauf.
 """
@@ -150,73 +150,82 @@ if "aktive_frage" not in st.session_state:
 if "vorherige_rolle" not in st.session_state:
     st.session_state.vorherige_rolle = "Bitte auswählen..."
 
-# Callback: Setzt alte Drop-down-Inhalte im Speicher zurück
-def reset_dropdown_states():
+# Funktion zum radikalen Leeren der Drop-down-Auswahlen im Cache
+def clear_all_dropdown_selections():
     for key in list(st.session_state.keys()):
         if key.startswith("sub_cat_wahl_"):
             del st.session_state[key]
 
-# Callback: Verarbeitet Klicks und zwingt das UI zum sofortigen, synchronen Neu-Rendern (Issue 33 & 34)
-def on_button_click(aktion_name, frage_text):
-    reset_dropdown_states()
-    st.session_state.aktive_aktion = aktion_name
-    st.session_state.aktive_frage = frage_text
-    st.rerun()
-
 nutzer_rolle = st.selectbox("Wer bist du?", ["Bitte auswählen...", "Besucher", "Eigentümer", "Administrator", "Handwerker/Helfer"])
 
+# Sofortiger Reset bei Wechsel der Benutzerrolle (Issue 29)
 if nutzer_rolle != st.session_state.vorherige_rolle:
     st.session_state.vorherige_rolle = nutzer_rolle
     st.session_state.aktive_aktion = None
     st.session_state.aktive_frage = None
     st.session_state.messages = []  
-    reset_dropdown_states()
+    clear_all_dropdown_selections()
     st.rerun()
 
 if nutzer_rolle != "Bitte auswählen...":
     st.write("---")
     st.subheader("Mein Anliegen:")
     
+    # Issue 33 & 35 gelöst: Direktes Abfangen des Button-Klicks für synchronen Wechsel
     if nutzer_rolle == "Besucher":
         col1, col2 = st.columns(2)
         with col1:
-            st.button("Ich brauche Hilfe.", use_container_width=True, 
-                      type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary",
-                      on_click=on_button_click, args=("Hilfe", "Wobei kann ich dir helfen?"))
+            if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
+                clear_all_dropdown_selections()
+                st.session_state.aktive_aktion = "Hilfe"
+                st.session_state.aktive_frage = "Wobei kann ich dir helfen?"
+                st.rerun()
         with col2:
-            st.button("Es gibt eine Störung.", use_container_width=True, 
-                      type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary",
-                      on_click=on_button_click, args=("Störung", "Was ist passiert?"))
+            if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
+                clear_all_dropdown_selections()
+                st.session_state.aktive_aktion = "Störung"
+                st.session_state.aktive_frage = "Was ist passiert?"
+                st.rerun()
     else:
         col1, col2, col3 = st.columns(3)
         col4, col5 = st.columns(2)
         with col1:
-            st.button("Ich brauche Hilfe.", use_container_width=True, 
-                      type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary",
-                      on_click=on_button_click, args=("Hilfe", "Wobei kann ich dir helfen?"))
+            if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
+                clear_all_dropdown_selections()
+                st.session_state.aktive_aktion = "Hilfe"
+                st.session_state.aktive_frage = "Wobei kann ich dir helfen?"
+                st.rerun()
         with col2:
-            st.button("Ich habe neue Informationen.", use_container_width=True, 
-                      type="primary" if st.session_state.aktive_aktion == "Information" else "secondary",
-                      on_click=on_button_click, args=("Information", "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu."))
+            if st.button("Ich habe neue Informationen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Information" else "secondary"):
+                clear_all_dropdown_selections()
+                st.session_state.aktive_aktion = "Information"
+                st.session_state.aktive_frage = "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu."
+                st.rerun()
         with col3:
-            st.button("Es gibt eine Störung.", use_container_width=True, 
-                      type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary",
-                      on_click=on_button_click, args=("Störung", "Was ist passiert?"))
+            if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
+                clear_all_dropdown_selections()
+                st.session_state.aktive_aktion = "Störung"
+                st.session_state.aktive_frage = "Was ist passiert?"
+                st.rerun()
         with col4:
-            st.button("Ich benötigt einen Bericht.", use_container_width=True, 
-                      type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary",
-                      on_click=on_button_click, args=("Bericht", "Nenne mir bitte den Zeitraum und das Thema."))
+            if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
+                clear_all_dropdown_selections()
+                st.session_state.aktive_aktion = "Bericht"
+                st.session_state.aktive_frage = "Nenne mir bitte den Zeitraum und das Thema."
+                st.rerun()
         with col5:
-            st.button("Ich möchte eine Änderung an der Wissensbasis vornehmen.", use_container_width=True, 
-                      type="primary" if st.session_state.aktive_aktion == "Änderung" else "secondary",
-                      on_click=on_button_click, args=("Änderung", "Beschreibe deine Änderung so genau wie möglich."))
+            if st.button("Ich möchte eine Änderung an der Wissensbasis vornehmen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Änderung" else "secondary"):
+                clear_all_dropdown_selections()
+                st.session_state.aktive_aktion = "Änderung"
+                st.session_state.aktive_frage = "Beschreibe deine Änderung so genau wie möglich."
+                st.rerun()
 
     # ==========================================
     # 5. DROPDOWN-MENÜS (DYNAMISCHER KEY-RESET)
     # ==========================================
     if st.session_state.aktive_aktion:
         st.write("")
-        # Issue 33 Fix: Zeigt jetzt garantiert synchron die exakte Frage an
+        # Zeigt jetzt garantiert absolut synchron das gewählte Anliegen an
         st.info(f"**Villa Avatar:** {st.session_state.aktive_frage}")
         
         kategorien_fuer_rolle = []
@@ -239,8 +248,7 @@ if nutzer_rolle != "Bitte auswählen...":
                 verfuegbare_bezeichnungen = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
                 verfuegbare_bezeichnungen = sorted([str(b).strip() for b in verfuegbare_bezeichnungen])
                 
-                # Issue 34 Fix: Durch den dynamischen Key im Format f"..._{st.session_state.aktive_aktion}"
-                # wird das Drop-down bei jedem Button-Wechsel komplett auf den Ursprung zurückgesetzt!
+                # Issue 34 Fix: Durch Anhängen der aktiven Aktion an den Key zwingen wir das Widget zum sauberen Leeren
                 wahl = st.selectbox(
                     label=f"Hidden_Label_{kat}", 
                     options=verfuegbare_bezeichnungen,
