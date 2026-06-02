@@ -119,12 +119,12 @@ def generate_ki_response(prompt_text):
 # Issue 17: Neuer Titel im Browsertab
 st.set_page_config(page_title="Villa Avatar", page_icon="☀️", layout="centered")
 
-# Schöneres Styling für die Drop-downs (Kompakt und fettgedruckt)
+# FIX für Issue 15/18: Korrekter Parametername "unsafe_allow_html"
 st.markdown("""
     <style>
     div[data-testid="stSelectbox"] label { font-weight: bold; font-size: 15px; }
     </style>
-""", unsafe_allowed_html=True)
+""", unsafe_allow_html=True)
 
 # Titel auf der Oberfläche
 st.title("☀️ Villa Avatar")
@@ -236,9 +236,9 @@ if nutzer_rolle != "Bitte auswählen...":
             # Packe den Kategorienamen als ersten Eintrag in die Liste (Standard)
             dropdown_optionen = [kat] + verfuegbare_bezeichnungen
             
-            # Rendere das Dropdown-Feld
+            # Rendere das Dropdown-Feld (Label zeigt dynamisch den Kategorienamen an)
             wahl = st.selectbox(
-                f"Kategorie-Filter:", 
+                f"{kat}:", 
                 dropdown_optionen,
                 key=f"sub_cat_{kat}"
             )
