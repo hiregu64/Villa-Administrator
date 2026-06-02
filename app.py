@@ -1,6 +1,6 @@
 import streamlit as st
-import requests
-import json
+from google import genai
+from google.genai import types
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -64,7 +64,7 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return False
 
 # ==========================================
-# 3. KI-GEHIRN VIA STANDARD-HTTP (FIX FÜR ISSUE 13)
+# 3. KI-GEHIRN (OFFIZIELLES GOOGLE-GENAI SDK)
 # ==========================================
 VILLA_PROMPT = """
 Du bist „Villa“, der digitale Verwalter für die Bewohner und Helfer der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses so einfach wie möglich zu halten.
@@ -73,44 +73,41 @@ Beziehe dich bei allgemeinen Abläufen auf 'Villa Wissen_72.jfif' und bei der Wa
 WICHTIGER KONTEXT: Antworte kurz, präzise und smartphone-optimiert. Nutze übergebene Rollen und HMI-Kategorien zwingend als Arbeitsgrundlage.
 """
 
+# Initialisiere den offiziellen Google GenAI Client
+@st.cache_resource
+def get_ki_client():
+    if "GEMINI_API_KEY" in st.secrets:
+        return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    return None
+
+client = get_ki_client()
+
 def generate_ki_response(prompt_text):
-    if "GEMINI_API_KEY" not in st.secrets:
-        return "KI-Dienst nicht konfiguriert (API Key fehlt)."
-    
-    api_key = st.secrets["GEMINI_API_KEY"]
-    
-    # URL-FIX: Modellname "gemini-1.5-flash" wird direkt nach /models/ eingesetzt (ohne doppeltes "models/")
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
-    headers = {"Content-Type": "application/json"}
-    
-    payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [{"text": f"SYSTEM-INSTRUCTION: {VILLA_PROMPT}\n\nBitte bestätige kurz verstanden zu haben."}]
-            },
-            {
-                "role": "model",
-                "parts": [{"text": "Verstanden. Ich agiere ab jetzt exakt als digitaler Verwalter 'Villa' nach deinen Vorgaben."}]
-            },
-            {
-                "role": "user",
-                "parts": [{"text": prompt_text}]
-            }
-        ]
-    }
-    
+    if client is None:
+        return "KI-Dienst nicht konfiguriert (API Key fehlt in den Secrets)."
     try:
-        response = requests.post(url, headers=headers, json=payload)
-        response_json = response.json()
-        
-        if response.status_code == 200:
-            return response_json['candidates'][0]['content']['parts'][0]['text']
-        else:
-            error_msg = response_json.get('error', {}).get('message', 'Unbekannter API-Fehler')
-            return f"Fehler bei der API-Verarbeitung ({response.status_code}): {error_msg}"
+        # Das neue SDK nutzt standardmäßig "gemini-2.5-flash" für die stabile v1-API
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt_text,
+            config=types.GenerateContentConfig(
+                system_instruction=VILLA_PROMPT
+            )
+        )
+        return response.text
     except Exception as e:
-        return f"Verbindungsfehler zur KI-Schnittstelle: {e}"
+        # Sicherheits-Fallback auf das 1.5er Modell, falls der Key für 2.5 noch nicht freigeschaltet ist
+        try:
+            response = client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=prompt_text,
+                config=types.GenerateContentConfig(
+                    system_instruction=VILLA_PROMPT
+                )
+            )
+            return response.text
+        except Exception:
+            return f"Fehler bei der KI-Verarbeitung: {e}"
 
 # ==========================================
 # 4. BENUTZEROBERFLÄCHE (STREAMLIT UI)
@@ -238,7 +235,7 @@ if prompt := st.chat_input("Wie kann ich helfen? (z.B. 'Frage: Wo ist der Hauptw
                 st.cache_data.clear()
                 df_wissen, _ = load_data_from_drive()
 
-        # KI-Antwort generieren via bereinigtem Payload
+        # KI-Antwort generieren via neuem SDK
         kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
         with st.chat_message("assistant"):
             antwort_text = generate_ki_response(
