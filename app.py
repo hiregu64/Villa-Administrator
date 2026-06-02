@@ -72,16 +72,17 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return False
 
 # ==========================================
-# 3. KI-GEHIRN (OFFIZIELLES GOOGLE-GENAI SDK)
+# 3. KI-GEHIRN (OPTIMIERT - Issue 41 & 42)
 # ==========================================
+# Issue 41 gelöst: Keine Erwähnung von internen Dateinamen im System-Prompt
 VILLA_PROMPT = """
 Du bist „Villa Avatar“, der digitale Helfer für die Bewohner und Helfer der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses so einfach wie möglich zu halten.
-Beziehe dich bei allgemeinen Abläufen auf 'Villa Wissen_72.jfif' und bei der Wasserversorgung auf 'PXL_20260516_202437801_72.jpg'.
 
 WICHTIGER KONTEXT & VERHALTEN:
 - Antworte immer kurz, präzise und smartphone-optimiert.
 - Nutze die vom HMI übergebene Rolle und die gewählte Kategorie/Bezeichnung zwingend als Arbeitsgrundlage.
-- Wenn das HMI dir eine konkrete Bezeichnung (z. B. "Beregnungssystem") übergibt, beziehe dich exakt darauf.
+- Beziehe dich exakt auf die übergebenen Daten aus der Wissensbasis.
+- WICHTIG: Erwähne NIEMALS interne Dateinamen, Bildbezeichnungen (wie '.jfif' oder '.jpg') oder Tabellenstrukturen gegenüber dem Nutzer. Antworte so, als hättest du dieses Wissen einfach im Kopf.
 """
 
 @st.cache_resource
@@ -103,6 +104,9 @@ def generate_ki_response(prompt_text):
         )
         return response.text
     except Exception as e:
+        # Issue 42 gelöst: Nutzerfreundliches Abfangen von Serverüberlastungen
+        if "503" in str(e) or "UNAVAILABLE" in str(e):
+            return "⏳ Die Google Gemini Server sind aktuell stark ausgelastet. Bitte warte einen kurzen Moment und sende deine Nachricht gleich noch einmal!"
         try:
             response = client.models.generate_content(
                 model="gemini-1.5-flash",
@@ -144,6 +148,7 @@ st.markdown("Hallo! Ich bin Villa Avatar, dein digitaler **'Helfer'**!")
 # ==========================================
 # 5. DIE EXAKTE HMI-ZUSTANDSMATRIX (NACH PPT SEITE 2)
 # ==========================================
+# Gekoppelte Matrix für Rechte und Inhalte
 HMI_MATRIX = {
     "Besucher": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": ["Ausstattung innen", "Ausstattung außen"]},
@@ -153,8 +158,7 @@ HMI_MATRIX = {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": ["Ausstattung innen", "Ausstattung außen"]},
         "Information": {"text": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]},
         "Störung": {"text": "Was ist passiert?", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]},
-        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]},
-        "Änderung": {"text": "Beschreibe deine Änderung so genau wie möglich.", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]}
+        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]}
     },
     "Administrator": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": ["Ausstattung innen", "Ausstattung außen"]},
@@ -167,8 +171,7 @@ HMI_MATRIX = {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": ["Ausstattung innen", "Ausstattung außen"]},
         "Information": {"text": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.", "dd": ["Systeme", "Ausstattung außen"]},
         "Störung": {"text": "Was ist passiert?", "dd": ["Systeme", "Ausstattung außen"]},
-        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": ["Systeme", "Ausstattung außen"]},
-        "Änderung": {"text": "Beschreibe deine Änderung so genau wie möglich.", "dd": ["Systeme", "Ausstattung außen"]}
+        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": ["Systeme", "Ausstattung außen"]}
     }
 }
 
@@ -179,12 +182,16 @@ if "aktive_aktion" not in st.session_state:
 if "vorherige_rolle" not in st.session_state:
     st.session_state.vorherige_rolle = None
 
-def clear_all_dropdown_selections():
+# Hilfsfunktion, die bei Buttonklick ALLES zurücksetzt (Issue 44 Fix)
+def handle_button_click(aktions_name):
     for key in list(st.session_state.keys()):
         if key.startswith("sub_cat_wahl_"):
             del st.session_state[key]
+    st.session_state.aktive_aktion = aktions_name
+    st.session_state.messages = []  # Issue 44 gelöst: Chat löscht sich jetzt auch bei Button-Wechsel!
+    st.rerun()
 
-# Issue 39 gelöst: "Wer bist du?" direkt als sauberer Placeholder im Drop-down integriert
+# Kompakte Rollenauswahl (Issue 39)
 nutzer_rolle = st.selectbox(
     label="Hidden_Rollen_Label",
     options=["Besucher", "Eigentümer", "Administrator", "Handwerker/Helfer"],
@@ -198,54 +205,61 @@ if nutzer_rolle != st.session_state.vorherige_rolle:
     st.session_state.vorherige_rolle = nutzer_rolle
     st.session_state.aktive_aktion = None
     st.session_state.messages = []  
-    clear_all_dropdown_selections()
+    for key in list(st.session_state.keys()):
+        if key.startswith("sub_cat_wahl_"):
+            del st.session_state[key]
     st.rerun()
 
 if nutzer_rolle is not None:
     st.write("---")
     st.subheader("Mein Anliegen:")
     
-    # 2. Schritt: Buttons rendern je nach Rolle
+    # Dynamisches Layout je nach Rolle und Rechten (Issue 43)
     if nutzer_rolle == "Besucher":
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
-                clear_all_dropdown_selections()
-                st.session_state.aktive_aktion = "Hilfe"
-                st.rerun()
+                handle_button_click("Hilfe")
         with col2:
             if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
-                clear_all_dropdown_selections()
-                st.session_state.aktive_aktion = "Störung"
-                st.rerun()
-    else:
+                handle_button_click("Störung")
+                
+    elif nutzer_rolle == "Administrator":
+        # Nur der Administrator bekommt alle 5 Buttons inklusive Änderung (Issue 43)
         col1, col2, col3 = st.columns(3)
         col4, col5 = st.columns(2)
         with col1:
             if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
-                clear_all_dropdown_selections()
-                st.session_state.aktive_aktion = "Hilfe"
-                st.rerun()
+                handle_button_click("Hilfe")
         with col2:
             if st.button("Ich habe neue Informationen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Information" else "secondary"):
-                clear_all_dropdown_selections()
-                st.session_state.aktive_aktion = "Information"
-                st.rerun()
+                handle_button_click("Information")
         with col3:
             if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
-                clear_all_dropdown_selections()
-                st.session_state.aktive_aktion = "Störung"
-                st.rerun()
+                handle_button_click("Störung")
         with col4:
             if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
-                clear_all_dropdown_selections()
-                st.session_state.aktive_aktion = "Bericht"
-                st.rerun()
+                handle_button_click("Bericht")
         with col5:
             if st.button("Ich möchte eine Änderung an der Wissensbasis vornehmen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Änderung" else "secondary"):
-                clear_all_dropdown_selections()
-                st.session_state.aktive_aktion = "Änderung"
-                st.rerun()
+                handle_button_click("Änderung")
+                
+    else:
+        # Eigentümer und Handwerker sehen exakt diese 4 Buttons (Keine Änderungen - Issue 43)
+        col1, col2 = st.columns(2)
+        col3, col4 = st.columns(2)
+        with col1:
+            if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
+                handle_button_click("Hilfe")
+        with col2:
+            if st.button("Ich habe neue Informationen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Information" else "secondary"):
+                handle_button_click("Information")
+        with col3:
+            if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
+                handle_button_click("Störung")
+        with col4:
+            if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
+                handle_button_click("Bericht")
 
     # ==========================================
     # 6. ABSOLUT SYNCHRONE GEGENFRAGEN & DROP-DOWNS
@@ -282,14 +296,13 @@ if nutzer_rolle is not None:
                         konkrete_auswahlen[kat] = wahl
 
 # ==========================================
-# 7. CHAT-ANZEIGE UND MANUELLER INPUT
+# 7. CHAT-ANZEIGE UND MANUELLER INPUT (Issue 40)
 # ==========================================
 st.write("---")
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Issue 40 gelöst: Neues, smartphone-optimiertes Eingabefeld inklusive Mikrofon-Symbol
 if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
     if nutzer_rolle is None:
         st.warning("Bitte wähle oben zuerst aus, wer du bist!")
