@@ -72,15 +72,14 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return False
 
 # ==========================================
-# 3. KI-GEHIRN (OPTIMIERT - Issue 41 & 42)
+# 3. KI-GEHIRN (PPT-KONFORMER SYSTEM-PROMPT)
 # ==========================================
-# Issue 41 gelöst: Keine Erwähnung von internen Dateinamen im System-Prompt
 VILLA_PROMPT = """
-Du bist „Villa Avatar“, der digitale Helfer für die Bewohner und Helfer der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses so einfach wie möglich zu halten.
+Du bist „Villa Avatar“, der digitale Helfer für die Bewohner, Eigentümer und Admins der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses so einfach wie möglich zu halten.
 
 WICHTIGER KONTEXT & VERHALTEN:
 - Antworte immer kurz, präzise und smartphone-optimiert.
-- Nutze die vom HMI übergebene Rolle und die gewählte Kategorie/Bezeichnung zwingend als Arbeitsgrundlage.
+- Nutze die vom HMI übergebene Rolle (Besucher, Eigentümer oder Admin) und die gewählte Kategorie/Bezeichnung zwingend als Arbeitsgrundlage.
 - Beziehe dich exakt auf die übergebenen Daten aus der Wissensbasis.
 - WICHTIG: Erwähne NIEMALS interne Dateinamen, Bildbezeichnungen (wie '.jfif' oder '.jpg') oder Tabellenstrukturen gegenüber dem Nutzer. Antworte so, als hättest du dieses Wissen einfach im Kopf.
 """
@@ -104,7 +103,6 @@ def generate_ki_response(prompt_text):
         )
         return response.text
     except Exception as e:
-        # Issue 42 gelöst: Nutzerfreundliches Abfangen von Serverüberlastungen
         if "503" in str(e) or "UNAVAILABLE" in str(e):
             return "⏳ Die Google Gemini Server sind aktuell stark ausgelastet. Bitte warte einen kurzen Moment und sende deine Nachricht gleich noch einmal!"
         try:
@@ -143,12 +141,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("☀️ Villa Avatar")
-st.markdown("Hallo! Ich bin Villa Avatar, dein digitaler **'Helfer'**!")
+st.markdown("Hallo! Ich bin Villa Avatar, dein digitaler **'Helfer'**! Wähle unten die Rolle aus, um zu beginnen.")
 
 # ==========================================
-# 5. DIE EXAKTE HMI-ZUSTANDSMATRIX (NACH PPT SEITE 2)
+# 5. DIE EXAKTE HMI-ZUSTANDSMATRIX (REIN PPT-KONFORM)
 # ==========================================
-# Gekoppelte Matrix für Rechte und Inhalte
 HMI_MATRIX = {
     "Besucher": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": ["Ausstattung innen", "Ausstattung außen"]},
@@ -160,18 +157,12 @@ HMI_MATRIX = {
         "Störung": {"text": "Was ist passiert?", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]},
         "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]}
     },
-    "Administrator": {
+    "Admin": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": ["Ausstattung innen", "Ausstattung außen"]},
         "Information": {"text": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]},
         "Störung": {"text": "Was ist passiert?", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]},
         "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]},
         "Änderung": {"text": "Beschreibe deine Änderung so genau wie möglich.", "dd": ["Systeme", "Ausstattung innen", "Ausstattung außen"]}
-    },
-    "Handwerker/Helfer": {
-        "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": ["Ausstattung innen", "Ausstattung außen"]},
-        "Information": {"text": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.", "dd": ["Systeme", "Ausstattung außen"]},
-        "Störung": {"text": "Was ist passiert?", "dd": ["Systeme", "Ausstattung außen"]},
-        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": ["Systeme", "Ausstattung außen"]}
     }
 }
 
@@ -182,19 +173,18 @@ if "aktive_aktion" not in st.session_state:
 if "vorherige_rolle" not in st.session_state:
     st.session_state.vorherige_rolle = None
 
-# Hilfsfunktion, die bei Buttonklick ALLES zurücksetzt (Issue 44 Fix)
 def handle_button_click(aktions_name):
     for key in list(st.session_state.keys()):
         if key.startswith("sub_cat_wahl_"):
             del st.session_state[key]
     st.session_state.aktive_aktion = aktions_name
-    st.session_state.messages = []  # Issue 44 gelöst: Chat löscht sich jetzt auch bei Button-Wechsel!
+    st.session_state.messages = []  # Chat löschen bei Button-Wechsel
     st.rerun()
 
-# Kompakte Rollenauswahl (Issue 39)
+# Kompakte Rollenauswahl (Besucher, Eigentümer, Admin)
 nutzer_rolle = st.selectbox(
     label="Hidden_Rollen_Label",
-    options=["Besucher", "Eigentümer", "Administrator", "Handwerker/Helfer"],
+    options=["Besucher", "Eigentümer", "Admin"],
     index=None,
     placeholder="Wer bist du?",
     label_visibility="collapsed"
@@ -214,7 +204,7 @@ if nutzer_rolle is not None:
     st.write("---")
     st.subheader("Mein Anliegen:")
     
-    # Dynamisches Layout je nach Rolle und Rechten (Issue 43)
+    # Exaktes Zeichnen der Knöpfe je nach PPT-Rolle
     if nutzer_rolle == "Besucher":
         col1, col2 = st.columns(2)
         with col1:
@@ -224,8 +214,7 @@ if nutzer_rolle is not None:
             if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
                 handle_button_click("Störung")
                 
-    elif nutzer_rolle == "Administrator":
-        # Nur der Administrator bekommt alle 5 Buttons inklusive Änderung (Issue 43)
+    elif nutzer_rolle == "Admin":
         col1, col2, col3 = st.columns(3)
         col4, col5 = st.columns(2)
         with col1:
@@ -244,8 +233,7 @@ if nutzer_rolle is not None:
             if st.button("Ich möchte eine Änderung an der Wissensbasis vornehmen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Änderung" else "secondary"):
                 handle_button_click("Änderung")
                 
-    else:
-        # Eigentümer und Handwerker sehen exakt diese 4 Buttons (Keine Änderungen - Issue 43)
+    else:  # Eigentümer
         col1, col2 = st.columns(2)
         col3, col4 = st.columns(2)
         with col1:
@@ -296,7 +284,7 @@ if nutzer_rolle is not None:
                         konkrete_auswahlen[kat] = wahl
 
 # ==========================================
-# 7. CHAT-ANZEIGE UND MANUELLER INPUT (Issue 40)
+# 7. CHAT-ANZEIGE UND MANUELLER INPUT
 # ==========================================
 st.write("---")
 for message in st.session_state.messages:
