@@ -150,15 +150,18 @@ if "aktive_frage" not in st.session_state:
 if "vorherige_rolle" not in st.session_state:
     st.session_state.vorherige_rolle = "Bitte auswählen..."
 
+# Callback: Setzt alte Drop-down-Inhalte im Speicher zurück
 def reset_dropdown_states():
     for key in list(st.session_state.keys()):
         if key.startswith("sub_cat_wahl_"):
             del st.session_state[key]
 
+# Callback: Verarbeitet Klicks und zwingt das UI zum sofortigen, synchronen Neu-Rendern (Issue 33 & 34)
 def on_button_click(aktion_name, frage_text):
     reset_dropdown_states()
     st.session_state.aktive_aktion = aktion_name
     st.session_state.aktive_frage = frage_text
+    st.rerun()
 
 nutzer_rolle = st.selectbox("Wer bist du?", ["Bitte auswählen...", "Besucher", "Eigentümer", "Administrator", "Handwerker/Helfer"])
 
@@ -168,12 +171,12 @@ if nutzer_rolle != st.session_state.vorherige_rolle:
     st.session_state.aktive_frage = None
     st.session_state.messages = []  
     reset_dropdown_states()
+    st.rerun()
 
 if nutzer_rolle != "Bitte auswählen...":
     st.write("---")
     st.subheader("Mein Anliegen:")
     
-    # Grid für Buttons (Exakte Texte nach PPT Seite 2)
     if nutzer_rolle == "Besucher":
         col1, col2 = st.columns(2)
         with col1:
@@ -194,13 +197,13 @@ if nutzer_rolle != "Bitte auswählen...":
         with col2:
             st.button("Ich habe neue Informationen.", use_container_width=True, 
                       type="primary" if st.session_state.aktive_aktion == "Information" else "secondary",
-                      on_click=on_button_click, args=("Information", "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu." ))
+                      on_click=on_button_click, args=("Information", "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu."))
         with col3:
             st.button("Es gibt eine Störung.", use_container_width=True, 
                       type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary",
                       on_click=on_button_click, args=("Störung", "Was ist passiert?"))
         with col4:
-            st.button("Ich benötige einen Bericht.", use_container_width=True, 
+            st.button("Ich benötigt einen Bericht.", use_container_width=True, 
                       type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary",
                       on_click=on_button_click, args=("Bericht", "Nenne mir bitte den Zeitraum und das Thema."))
         with col5:
@@ -209,20 +212,17 @@ if nutzer_rolle != "Bitte auswählen...":
                       on_click=on_button_click, args=("Änderung", "Beschreibe deine Änderung so genau wie möglich."))
 
     # ==========================================
-    # 5. DROPDOWN-MENÜS (KATEGORIEN-AUSWAHL)
+    # 5. DROPDOWN-MENÜS (DYNAMISCHER KEY-RESET)
     # ==========================================
     if st.session_state.aktive_aktion:
         st.write("")
-        # Zeigt exakt die von dir vorgegebene Frage aus der PPT an
+        # Issue 33 Fix: Zeigt jetzt garantiert synchron die exakte Frage an
         st.info(f"**Villa Avatar:** {st.session_state.aktive_frage}")
         
-        # Bestimme sichtbare Drop-downs anhand der PPT-Matrix
         kategorien_fuer_rolle = []
         if st.session_state.aktive_aktion == "Hilfe":
-            # "Ich brauche Hilfe" bietet laut PPT nur Ausstattung innen/außen an
             kategorien_fuer_rolle = ["Ausstattung innen", "Ausstattung außen"]
         else:
-            # Alle anderen Aktionen bieten alle 3 Kategorien an (Systeme, Ausstattung innen/außen)
             if nutzer_rolle == "Handwerker/Helfer":
                 kategorien_fuer_rolle = ["Systeme", "Ausstattung außen"]
             else:
@@ -239,12 +239,14 @@ if nutzer_rolle != "Bitte auswählen...":
                 verfuegbare_bezeichnungen = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
                 verfuegbare_bezeichnungen = sorted([str(b).strip() for b in verfuegbare_bezeichnungen])
                 
+                # Issue 34 Fix: Durch den dynamischen Key im Format f"..._{st.session_state.aktive_aktion}"
+                # wird das Drop-down bei jedem Button-Wechsel komplett auf den Ursprung zurückgesetzt!
                 wahl = st.selectbox(
                     label=f"Hidden_Label_{kat}", 
                     options=verfuegbare_bezeichnungen,
                     index=None,
                     placeholder=kat,
-                    key=f"sub_cat_wahl_{kat}",
+                    key=f"sub_cat_wahl_{kat}_{st.session_state.aktive_aktion}",
                     label_visibility="collapsed"
                 )
                 
@@ -265,15 +267,12 @@ if prompt := st.chat_input("Wie kann ich helfen?"):
     elif not st.session_state.aktive_aktion:
         st.warning("Bitte wähle oben zuerst ein Anliegen aus!")
     else:
-        # Reiner, unverfälschter Nutzer-Text für die Chat-Anzeige
         with st.chat_message("user"):
             st.markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
         
-        # Gewähltes HMI-Objekt ermitteln
         gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if konkrete_auswahlen else ""
         
-        # Automatische Protokollierung in Google Drive bei "neuen Informationen"
         if st.session_state.aktive_aktion == "Information" and df_wissen is not None:
             kat_text = ", ".join(konkrete_auswahlen.keys()) if konkrete_auswahlen else "Allgemein"
             with st.spinner("Eintrag wird in Google Drive gespeichert..."):
@@ -281,7 +280,6 @@ if prompt := st.chat_input("Wie kann ich helfen?"):
                 st.cache_data.clear()
                 df_wissen, _ = load_data_from_drive()
 
-        # KI-Hintergrundkontext zusammenstellen
         kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
         
         with st.chat_message("assistant"):
