@@ -137,6 +137,15 @@ st.markdown("""
     div[data-testid="stChatMessage"]:has(div[aria-label="Chat message from user"]) div[data-testid="stMarkdownContainer"] p {
         text-align: right !important;
     }
+    
+    /* Rechtsbündiges Styling für die Anliegen-Zeile mit Icon (Issue 46) */
+    .rechtsbuendig-titel {
+        text-align: right;
+        font-size: 1.25rem;
+        font-weight: bold;
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -178,10 +187,10 @@ def handle_button_click(aktions_name):
         if key.startswith("sub_cat_wahl_"):
             del st.session_state[key]
     st.session_state.aktive_aktion = aktions_name
-    st.session_state.messages = []  # Chat löschen bei Button-Wechsel
+    st.session_state.messages = []  
     st.rerun()
 
-# Kompakte Rollenauswahl (Besucher, Eigentümer, Admin)
+# Kompakte Rollenauswahl
 nutzer_rolle = st.selectbox(
     label="Hidden_Rollen_Label",
     options=["Besucher", "Eigentümer", "Admin"],
@@ -202,9 +211,11 @@ if nutzer_rolle != st.session_state.vorherige_rolle:
 
 if nutzer_rolle is not None:
     st.write("---")
-    st.subheader("Mein Anliegen:")
     
-    # Exaktes Zeichnen der Knöpfe je nach PPT-Rolle
+    # Issue 46 gelöst: Überschrift ist rechtsbündig und hat das rote/Kopf-Benutzersymbol (👤)
+    st.markdown('<div class="rechtsbuendig-titel">Mein Anliegen: 👤</div>', unsafe_allow_html=True)
+    
+    # Exaktes Zeichnen der Knöpfe (Platzierung bleibt exakt wie gehabt)
     if nutzer_rolle == "Besucher":
         col1, col2 = st.columns(2)
         with col1:
@@ -257,7 +268,9 @@ if nutzer_rolle is not None:
         
         if aktiver_state:
             st.write("")
-            st.info(f"**Villa Avatar:** {aktiver_state['text']}")
+            
+            # Issue 47 gelöst: Statt reinem Text nutzen wir ein Info-Feld mit Roboter/Avatar-Icon (🤖) für die Chat-Sicht
+            st.info(f"🤖 **Villa Avatar:** {aktiver_state['text']}")
             
             kategorien_fuer_rolle = aktiver_state["dd"]
             konkrete_auswahlen = {}
