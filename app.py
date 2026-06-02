@@ -190,7 +190,6 @@ nutzer_rolle = st.selectbox(
     label_visibility="collapsed"
 )
 
-# Dynamik bei Änderung der Rolle weiter oben umsetzen
 if nutzer_rolle != st.session_state.vorherige_rolle:
     st.session_state.vorherige_rolle = nutzer_rolle
     st.session_state.aktive_aktion = None
@@ -203,11 +202,11 @@ if nutzer_rolle != st.session_state.vorherige_rolle:
 if nutzer_rolle is not None:
     st.write("---")
     
-    # Einheitliche, fette und rechtsbündige Formatierung im nativen App-Stil (Issue 46 & 48)
+    # Issue 50 gelöst: Nutzt jetzt genau das native rote Smiley-User-Symbol (🧑‍🦲/👤-Stil) aus dem unteren Chat
     with st.container():
         st.markdown(
             "<div style='text-align: right; font-weight: bold; font-size: 1.2rem; font-family: inherit; margin-bottom: 10px;'>"
-            "Mein Anliegen: 🧑‍💻"
+            "Mein Anliegen: 🧑‍🦲"
             "</div>", 
             unsafe_allow_html=True
         )
@@ -266,9 +265,9 @@ if nutzer_rolle is not None:
         if aktiver_state:
             st.write("")
             
-            # Vollkommen integrierter Chat-Stil für die Gegenfrage (Issue 47 & 48)
+            # Issue 49 gelöst: Keine Textdoppelung mehr im Container
             with st.chat_message("assistant"):
-                st.markdown(f"**Villa Avatar:** {aktiver_state['text']}")
+                st.markdown(aktiver_state['text'])
             
             kategorien_fuer_rolle = aktiver_state["dd"]
             konkrete_auswahlen = {}
