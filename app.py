@@ -202,11 +202,19 @@ if nutzer_rolle != st.session_state.vorherige_rolle:
 if nutzer_rolle is not None:
     st.write("---")
     
-    # Issue 50 gelöst: Nutzt jetzt genau das native rote Smiley-User-Symbol (🧑‍🦲/👤-Stil) aus dem unteren Chat
+    # Issue 51 gelöst: Exakter Nachbau des roten runden Smiley-User-Icons per Inline-CSS/SVG
     with st.container():
         st.markdown(
-            "<div style='text-align: right; font-weight: bold; font-size: 1.2rem; font-family: inherit; margin-bottom: 10px;'>"
-            "Mein Anliegen: 🧑‍🦲"
+            "<div style='display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 10px;'>"
+            "<span style='font-weight: bold; font-size: 1.2rem; font-family: inherit;'>Mein Anliegen:</span>"
+            "<div style='width: 32px; height: 32px; background-color: rgb(255, 75, 75); border-radius: 8px; display: flex; align-items: center; justify-content: center;'>"
+            "<svg viewBox='0 0 24 24' width='20' height='20' stroke='white' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'>"
+            "<circle cx='12' cy='12' r='10'></circle>"
+            "<path d='M8 14s1.5 2 4 2 4-2 4-2'></path>"
+            "<line x1='9' y1='9' x2='9.01' y2='9'></line>"
+            "<line x1='15' y1='9' x2='15.01' y2='9'></line>"
+            "</svg>"
+            "</div>"
             "</div>", 
             unsafe_allow_html=True
         )
@@ -265,7 +273,6 @@ if nutzer_rolle is not None:
         if aktiver_state:
             st.write("")
             
-            # Issue 49 gelöst: Keine Textdoppelung mehr im Container
             with st.chat_message("assistant"):
                 st.markdown(aktiver_state['text'])
             
