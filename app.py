@@ -124,25 +124,27 @@ def generate_ki_response(prompt_text):
 # ==========================================
 st.set_page_config(page_title="Villa Avatar", page_icon="☀️", layout="centered")
 
-# Issue 30: Erweitertes CSS für Drop-downs und echtes Rechts-/Linksbündiges Chat-Layout
+# CSS für kompakte Drop-downs sowie das korrigierte Rechts-/Linksbündige Messenger-Layout
 st.markdown("""
     <style>
     /* Styling für Drop-downs (Kompakt, fette Schrift im Inneren der Box) */
     div[data-testid="stSelectbox"] div[data-baseweb="select"] { font-weight: bold; font-size: 15px; }
     
-    /* CHAT-LAYOUT: Nutzer-Nachrichten (rechtsbündig, leicht abgetönter Hintergrund) */
+    /* CHAT-LAYOUT (Issue 30): Nutzer-Nachrichten-Container nach rechts schieben */
     div[data-testid="stChatMessage"]:has(div[aria-label="Chat message from user"]) {
         flex-direction: row-reverse !important;
-        text-align: right !important;
         background-color: rgba(0, 0, 0, 0.03) !important;
         border-radius: 10px !important;
         padding: 10px !important;
     }
     
-    /* Verhindert, dass der Text-Inhalt der Nutzer-Nachricht links klebt */
-    div[data-testid="stChatMessage"]:has(div[aria-label="Chat message from user"]) div[data-testid="stMarkdownContainer"] {
-        text-align: left !important;
-        display: inline-block !important;
+    /* Issue 32 Fix: Den eigentlichen Textblock und das Markdown komplett rechtsbündig zwingen */
+    div[data-testid="stChatMessage"]:has(div[aria-label="Chat message from user"]) div[data-testid="stChatMessageContent"] {
+        text-align: right !important;
+        width: 100% !important;
+    }
+    div[data-testid="stChatMessage"]:has(div[aria-label="Chat message from user"]) div[data-testid="stMarkdownContainer"] p {
+        text-align: right !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -175,12 +177,12 @@ def on_button_click(aktion_name, frage_text):
 # 4.1 Rollen-Auswahl
 nutzer_rolle = st.selectbox("Wer bist du?", ["Bitte auswählen...", "Besucher", "Eigentümer", "Administrator", "Handwerker/Helfer"])
 
-# Issue 29 gelöst: Radikaler Reset bei echtem Rollenwechsel (Verlauf & Aktionen leeren)
+# Issue 29 gelöst: Radikaler Reset bei Rollenwechsel (Verlauf & Aktionen leeren sich sofort)
 if nutzer_rolle != st.session_state.vorherige_rolle:
     st.session_state.vorherige_rolle = nutzer_rolle
     st.session_state.aktive_aktion = None
     st.session_state.aktive_frage = None
-    st.session_state.messages = []  # Verlauf wird sofort gelöscht
+    st.session_state.messages = []  
     reset_dropdown_states()
 
 # Wenn eine Rolle gewählt wurde, zeige "Mein Anliegen" und die Buttons
@@ -228,7 +230,7 @@ if nutzer_rolle != "Bitte auswählen...":
     # ==========================================
     if st.session_state.aktive_aktion:
         st.write("")
-        # 1. Spezifische Gegenfrage
+        # Spezifische Gegenfrage
         st.info(f"**Villa Avatar:** {st.session_state.aktive_frage}\n\n*Nutze vielleicht eines der Drop-downs unten, um mir konkret das betreffende Thema zu nennen.*")
         
         # Bestimme sichtbare Kategorien pro Rolle
@@ -252,8 +254,7 @@ if nutzer_rolle != "Bitte auswählen...":
                 verfuegbare_bezeichnungen = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
                 verfuegbare_bezeichnungen = sorted([str(b).strip() for b in verfuegbare_bezeichnungen])
                 
-                # Issue 31 gelöst: Der Kategorietext steht NICHT mehr in den Optionen, 
-                # sondern dient als nativer Placeholder! Index=None erzwingt eine leere Vorauswahl im Menü.
+                # Issue 31 gelöst: Der Kategorietext dient als nativer Placeholder und steht nicht mehr in der Liste.
                 wahl = st.selectbox(
                     label=f"Hidden_Label_{kat}", 
                     options=verfuegbare_bezeichnungen,
@@ -263,7 +264,6 @@ if nutzer_rolle != "Bitte auswählen...":
                     label_visibility="collapsed"
                 )
                 
-                # Wenn der Nutzer aktiv eine Bezeichnung angeklickt hat
                 if wahl is not None:
                     konkrete_auswahlen[kat] = wahl
 
@@ -271,7 +271,7 @@ if nutzer_rolle != "Bitte auswählen...":
 # 6. CHAT-ANZEIGE UND MANUELLER INPUT
 # ==========================================
 st.write("---")
-# Chat-Verlauf rendern (wird jetzt via CSS vollautomatisch formatiert)
+# Chat-Verlauf rendern (wird über das obige CSS formatiert)
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
