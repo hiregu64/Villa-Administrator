@@ -32,8 +32,7 @@ def load_data_from_drive():
         fh.seek(0)
         df = pd.read_excel(fh)
         
-        # VERZEICHNIS-LOGIK (Issue 28): Leere Zellen in Spalte A (Kategorie) 
-        # automatisch mit der jeweils darüberliegenden Überschrift auffüllen
+        # VERZEICHNIS-LOGIK: Leere Zellen in Spalte A (Kategorie) automatisch auffüllen
         if df is not None and not df.empty:
             df.iloc[:, 0] = df.iloc[:, 0].ffill()
             
@@ -121,19 +120,33 @@ def generate_ki_response(prompt_text):
             return f"Fehler bei der KI-Verarbeitung: {e}"
 
 # ==========================================
-# 4. BENUTZEROBERFLÄCHE (HMI)
+# 4. BENUTZEROBERFLÄCHE (HMI) & MESSENGER-STYLING
 # ==========================================
-# Issue 17: Titel im Browsertab
 st.set_page_config(page_title="Villa Avatar", page_icon="☀️", layout="centered")
 
-# Styling für die Drop-downs (Kompakt, fette Schrift im Inneren der Box)
+# Issue 30: Erweitertes CSS für Drop-downs und echtes Rechts-/Linksbündiges Chat-Layout
 st.markdown("""
     <style>
+    /* Styling für Drop-downs (Kompakt, fette Schrift im Inneren der Box) */
     div[data-testid="stSelectbox"] div[data-baseweb="select"] { font-weight: bold; font-size: 15px; }
+    
+    /* CHAT-LAYOUT: Nutzer-Nachrichten (rechtsbündig, leicht abgetönter Hintergrund) */
+    div[data-testid="stChatMessage"]:has(div[aria-label="Chat message from user"]) {
+        flex-direction: row-reverse !important;
+        text-align: right !important;
+        background-color: rgba(0, 0, 0, 0.03) !important;
+        border-radius: 10px !important;
+        padding: 10px !important;
+    }
+    
+    /* Verhindert, dass der Text-Inhalt der Nutzer-Nachricht links klebt */
+    div[data-testid="stChatMessage"]:has(div[aria-label="Chat message from user"]) div[data-testid="stMarkdownContainer"] {
+        text-align: left !important;
+        display: inline-block !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# Titel und Begrüßung (Issue 18)
 st.title("☀️ Villa Avatar")
 st.markdown("Hallo! Ich bin Villa Avatar, dein digitaler **'Helfer'**! Wähle unten die Rolle aus, um zu beginnen.")
 
@@ -147,13 +160,13 @@ if "aktive_frage" not in st.session_state:
 if "vorherige_rolle" not in st.session_state:
     st.session_state.vorherige_rolle = "Bitte auswählen..."
 
-# Callback: Setzt die Drop-downs auf ihren Standardwert zurück
+# Callback: Setzt die Drop-downs komplett zurück
 def reset_dropdown_states():
     for key in list(st.session_state.keys()):
         if key.startswith("sub_cat_wahl_"):
             del st.session_state[key]
 
-# Callback: Verarbeitet den Button-Wechsel sofort im selben Frame (Issue 23 & 24 & 26 Lösung)
+# Callback: Verarbeitet den Button-Wechsel sofort im selben Frame
 def on_button_click(aktion_name, frage_text):
     reset_dropdown_states()
     st.session_state.aktive_aktion = aktion_name
@@ -162,11 +175,12 @@ def on_button_click(aktion_name, frage_text):
 # 4.1 Rollen-Auswahl
 nutzer_rolle = st.selectbox("Wer bist du?", ["Bitte auswählen...", "Besucher", "Eigentümer", "Administrator", "Handwerker/Helfer"])
 
-# Automatischer UI-Reset bei Rollenwechsel
+# Issue 29 gelöst: Radikaler Reset bei echtem Rollenwechsel (Verlauf & Aktionen leeren)
 if nutzer_rolle != st.session_state.vorherige_rolle:
     st.session_state.vorherige_rolle = nutzer_rolle
     st.session_state.aktive_aktion = None
     st.session_state.aktive_frage = None
+    st.session_state.messages = []  # Verlauf wird sofort gelöscht
     reset_dropdown_states()
 
 # Wenn eine Rolle gewählt wurde, zeige "Mein Anliegen" und die Buttons
@@ -210,56 +224,54 @@ if nutzer_rolle != "Bitte auswählen...":
                       on_click=on_button_click, args=("Änderung", "Beschreibe deine Änderung so genau wie möglich."))
 
     # ==========================================
-    # 5. DIALOG-REIHENFOLGE (NEUE KATEGORIEN-NAMEN)
+    # 5. DIALOG-REIHENFOLGE (DROPDOWN-OPTIMIERUNG)
     # ==========================================
     if st.session_state.aktive_aktion:
         st.write("")
-        # 1. Spezifische Gegenfrage (Wechselt jetzt garantiert sofort mit jedem Button-Klick)
+        # 1. Spezifische Gegenfrage
         st.info(f"**Villa Avatar:** {st.session_state.aktive_frage}\n\n*Nutze vielleicht eines der Drop-downs unten, um mir konkret das betreffende Thema zu nennen.*")
         
-        # Bestimme sichtbare Kategorien pro Rolle (Exakte Benennung nach XLS-Update)
+        # Bestimme sichtbare Kategorien pro Rolle
         kategorien_fuer_rolle = []
         if nutzer_rolle == "Besucher":
             kategorien_fuer_rolle = ["Ausstattung innen", "Ausstattung außen"]
         elif nutzer_rolle in ["Eigentümer", "Administrator"]:
             kategorien_fuer_rolle = ["Systeme", "Ausstattung innen", "Ausstattung außen"]
-        else: # Handwerker/Helfer
+        else:
             kategorien_fuer_rolle = ["Systeme", "Ausstattung außen"]
 
         konkrete_auswahlen = {}
         
         if df_wissen is not None and not df_wissen.empty:
-            # Spalte 0 = Kategorie (z.B. Systeme), Spalte 1 = Bezeichnung (z.B. Beregnungssystem)
             kat_spalte = df_wissen.columns[0]
             bez_spalte = df_wissen.columns[1] if len(df_wissen.columns) > 1 else df_wissen.columns[0]
 
             for kat in kategorien_fuer_rolle:
-                # Filtere alle Bezeichnungen heraus, die dank .ffill() nun sauber dieser Kategorie zugeordnet sind
+                # Daten aus Excel filtern
                 mask = df_wissen[kat_spalte].astype(str).str.strip() == kat
                 verfuegbare_bezeichnungen = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
                 verfuegbare_bezeichnungen = sorted([str(b).strip() for b in verfuegbare_bezeichnungen])
                 
-                # Default-Option in der Box ist der Name der Kategorie selbst
-                dropdown_optionen = [kat] + verfuegbare_bezeichnungen
-                
-                # Issue 21 & 25 & 27 gelöst: Absoluter No-Line-Look. 
-                # Lässt sich perfekt aufklappen, scrollen, auswählen und fixieren.
+                # Issue 31 gelöst: Der Kategorietext steht NICHT mehr in den Optionen, 
+                # sondern dient als nativer Placeholder! Index=None erzwingt eine leere Vorauswahl im Menü.
                 wahl = st.selectbox(
                     label=f"Hidden_Label_{kat}", 
-                    options=dropdown_optionen,
+                    options=verfuegbare_bezeichnungen,
+                    index=None,
+                    placeholder=kat,
                     key=f"sub_cat_wahl_{kat}",
                     label_visibility="collapsed"
                 )
                 
-                # Wenn der Nutzer etwas Konkretes gewählt hat (ungleich dem Kategorie-Standardwert)
-                if wahl != kat:
+                # Wenn der Nutzer aktiv eine Bezeichnung angeklickt hat
+                if wahl is not None:
                     konkrete_auswahlen[kat] = wahl
 
 # ==========================================
 # 6. CHAT-ANZEIGE UND MANUELLER INPUT
 # ==========================================
 st.write("---")
-# Chat-Verlauf rendern
+# Chat-Verlauf rendern (wird jetzt via CSS vollautomatisch formatiert)
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -287,7 +299,7 @@ if prompt := st.chat_input("Wie kann ich helfen? (z.B. 'Frage: Wo ist der Hauptw
                 with st.spinner("Lade aktualisierte Wissensbasis..."):
                     df_wissen, _ = load_data_from_drive()
 
-        # KI-Antwort generieren unter Berücksichtigung der fixierten HMI-Auswahlen
+        # KI-Antwort generieren
         kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
         hmi_hinweis = f"Ausgewählte HMI-Spezifikation: {json.dumps(konkrete_auswahlen)}" if 'konkrete_auswahlen' in locals() and konkrete_auswahlen else "Keine HMI-Konkretisierung gewählt. Nutze Kontextanalyse für den Nutzertext."
         
