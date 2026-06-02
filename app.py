@@ -117,4 +117,180 @@ def generate_ki_response(prompt_text):
 # 4. BENUTZEROBERFLÄCHE (HMI)
 # ==========================================
 # Issue 17: Titel im Browsertab
-st.set_page_config(page_title="Villa Avatar", page_icon="
+st.set_page_config(page_title="Villa Avatar", page_icon="☀️", layout="centered")
+
+# Styling für die Drop-downs (Kompakt, fette Schrift im Inneren der Box)
+st.markdown("""
+    <style>
+    div[data-testid="stSelectbox"] div[data-baseweb="select"] { font-weight: bold; font-size: 15px; }
+    </style>
+""", unsafe_allow_html=True)
+
+# Titel und Begrüßung (Issue 18)
+st.title("☀️ Villa Avatar")
+st.markdown("Hallo! Ich bin Villa Avatar, dein digitaler **'Helfer'**! Wähle unten die Rolle aus, um zu beginnen.")
+
+# Session-State Initialisierungen
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "aktive_aktion" not in st.session_state:
+    st.session_state.aktive_aktion = None
+if "aktive_frage" not in st.session_state:
+    st.session_state.aktive_frage = None
+if "vorherige_rolle" not in st.session_state:
+    st.session_state.vorherige_rolle = "Bitte auswählen..."
+
+# Callback: Setzt die Drop-downs auf ihren Standardwert zurück (Issue 16 / 27 Lösung)
+def reset_dropdown_states():
+    for key in list(st.session_state.keys()):
+        if key.startswith("sub_cat_wahl_"):
+            del st.session_state[key]
+
+# Callback: Verarbeitet den Button-Wechsel sofort im selben Frame (Issue 23 & 24 & 26 Lösung)
+def on_button_click(aktion_name, frage_text):
+    reset_dropdown_states()
+    st.session_state.aktive_aktion = aktion_name
+    st.session_state.aktive_frage = frage_text
+
+# 4.1 Rollen-Auswahl
+nutzer_rolle = st.selectbox("Wer bist du?", ["Bitte auswählen...", "Besucher", "Eigentümer", "Administrator", "Handwerker/Helfer"])
+
+# Automatischer UI-Reset bei Rollenwechsel
+if nutzer_rolle != st.session_state.vorherige_rolle:
+    st.session_state.vorherige_rolle = nutzer_rolle
+    st.session_state.aktive_aktion = None
+    st.session_state.aktive_frage = None
+    reset_dropdown_states()
+
+# Wenn eine Rolle gewählt wurde, zeige "Mein Anliegen" und die Buttons
+if nutzer_rolle != "Bitte auswählen...":
+    st.write("---")
+    st.subheader("Mein Anliegen:")
+    
+    # Grid für Buttons (Issue 19 & 23: Sofortiges, farbiges Feedback dank direktem Callback)
+    if nutzer_rolle == "Besucher":
+        col1, col2 = st.columns(2)
+        with col1:
+            st.button("ℹ️ Ich brauche Hilfe.", use_container_width=True, 
+                      type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary",
+                      on_click=on_button_click, args=("Hilfe", "Was möchtest du wissen?"))
+        with col2:
+            st.button("⚠️ Es gibt eine Störung.", use_container_width=True, 
+                      type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary",
+                      on_click=on_button_click, args=("Störung", "Was ist passiert?"))
+    else:
+        col1, col2, col3 = st.columns(3)
+        col4, col5 = st.columns(2)
+        with col1:
+            st.button("ℹ️ Ich brauche Hilfe.", use_container_width=True, 
+                      type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary",
+                      on_click=on_button_click, args=("Hilfe", "Was möchtest du wissen?"))
+        with col2:
+            st.button("⚠️ Es gibt eine Störung.", use_container_width=True, 
+                      type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary",
+                      on_click=on_button_click, args=("Störung", "Was ist passiert?"))
+        with col3:
+            st.button("📊 Ich benötige einen Bericht.", use_container_width=True, 
+                      type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary",
+                      on_click=on_button_click, args=("Bericht", "Nenne mir bitte den Zeitraum und das Thema."))
+        with col4:
+            st.button("📝 Ich habe neue Informationen.", use_container_width=True, 
+                      type="primary" if st.session_state.aktive_aktion == "Information" else "secondary",
+                      on_click=on_button_click, args=("Information", "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu."))
+        with col5:
+            st.button("🛠️ Ich möchte eine Änderung am XLS vornehmen.", use_container_width=True, 
+                      type="primary" if st.session_state.aktive_aktion == "Änderung" else "secondary",
+                      on_click=on_button_click, args=("Änderung", "Beschreibe deine Änderung so genau wie möglich."))
+
+    # ==========================================
+    # 5. DIALOG-REIHENFOLGE NACH ISSUE 20 & 21 & 25
+    # ==========================================
+    if st.session_state.aktive_aktion:
+        st.write("")
+        # 1. Spezifische Gegenfrage (Issue 20 & 26: Ändert sich jetzt garantiert mit jedem Klick sofort)
+        st.info(f"**Villa Avatar:** {st.session_state.aktive_frage}\n\n*Nutze vielleicht eines der Drop-downs unten, um mir konkret das betreffende Thema zu nennen.*")
+        
+        # Bestimme sichtbare Kategorien pro Rolle
+        kategorien_fuer_rolle = []
+        if nutzer_rolle == "Besucher":
+            kategorien_fuer_rolle = ["Geräte / Ausst. innen", "Geräte / Ausst. außen"]
+        elif nutzer_rolle in ["Eigentümer", "Administrator"]:
+            kategorien_fuer_rolle = ["Systeme", "Geräte / Ausst. innen", "Geräte / Ausst. außen"]
+        else:
+            kategorien_fuer_rolle = ["Systeme", "Geräte / Ausst. außen"]
+
+        konkrete_auswahlen = {}
+        
+        if df_wissen is not None and not df_wissen.empty:
+            spalten = df_wissen.columns.tolist()
+            kat_spalte = spalten[0]
+            bez_spalte = spalten[1] if len(spalten) > 1 else spalten[0]
+
+            for kat in kategorien_fuer_rolle:
+                # Daten aus Excel filtern
+                suchbegriff = kat.replace(" ", "").lower()
+                mask = df_wissen[kat_spalte].astype(str).str.replace(" ", "").str.lower().str.contains(suchbegriff)
+                verfuegbare_bezeichnungen = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
+                verfuegbare_bezeichnungen = sorted([str(b) for b in verfuegbare_bezeichnungen])
+                
+                # Standardwert ist der Name der Kategorie
+                dropdown_optionen = [kat] + verfuegbare_bezeichnungen
+                
+                # Issue 21 & 25 & 27: Absoluter "No-Line-Look" via collapsed. 
+                # Die Drop-downs lassen sich jetzt fehlerfrei aufklappen, Werte wählen und fixieren!
+                wahl = st.selectbox(
+                    label=f"Hidden_Label_{kat}", 
+                    options=dropdown_optionen,
+                    key=f"sub_cat_wahl_{kat}",
+                    label_visibility="collapsed"
+                )
+                
+                # Wenn etwas ausgewählt wurde (nicht mehr der Standard-Kategorietext)
+                if wahl != kat:
+                    konkrete_auswahlen[kat] = wahl
+
+# ==========================================
+# 6. CHAT-ANZEIGE UND MANUELLER INPUT
+# ==========================================
+st.write("---")
+# Chat-Verlauf rendern (Ohne Müllzeilen, rein funktional)
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# Antwortzeile / Manueller Input ganz unten
+if prompt := st.chat_input("Wie kann ich helfen? (z.B. 'Frage: Wo ist der Hauptwasserhahn?')"):
+    if nutzer_rolle == "Bitte auswählen...":
+        st.warning("Bitte wähle oben zuerst aus, wer du bist!")
+    elif not st.session_state.aktive_aktion:
+        st.warning("Bitte wähle oben zuerst ein Anliegen aus!")
+    else:
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        
+        # Präfix-Erkennung für Direkt-Speicherung
+        if prompt.strip().lower().startswith("information:") and df_wissen is not None:
+            reiner_text = prompt.split(":", 1)[1].strip()
+            kat_text = ", ".join(konkrete_auswahlen.keys()) if 'konkrete_auswahlen' in locals() and konkrete_auswahlen else "Allgemein"
+            with st.spinner("Speichere Update direkt in Google Drive..."):
+                erfolg = append_info_to_drive(df_wissen, reiner_text, nutzername=nutzer_rolle, kategorie=kat_text)
+            if erfolg:
+                st.success("Eintrag erfolgreich in Google Drive gespeichert!")
+                st.cache_data.clear()
+                with st.spinner("Lade aktualisierte Wissensbasis..."):
+                    df_wissen, _ = load_data_from_drive()
+
+        # KI-Antwort generieren unter Berücksichtigung der fixierten HMI-Auswahlen
+        kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
+        hmi_hinweis = f"Ausgewählte HMI-Spezifikation: {json.dumps(konkrete_auswahlen)}" if 'konkrete_auswahlen' in locals() and konkrete_auswahlen else "Keine HMI-Konkretisierung gewählt. Nutze Kontextanalyse für den Nutzertext."
+        
+        with st.chat_message("assistant"):
+            with st.spinner("Villa Avatar überlegt..."):
+                antwort_text = generate_ki_response(
+                    f"SYSTEM-KONTEXT: Der Nutzer agiert in der Rolle '{nutzer_rolle}' mit dem Anliegen '{st.session_state.aktive_aktion}'.\n"
+                    f"{hmi_hinweis}\n"
+                    f"Anfrage: {prompt} {kontext}"
+                )
+            st.markdown(antwort_text)
+            st.session_state.messages.append({"role": "assistant", "content": antwort_text})
