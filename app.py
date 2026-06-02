@@ -144,7 +144,6 @@ st.markdown("Hallo! Ich bin Villa Avatar, dein digitaler **'Helfer'**!")
 # ==========================================
 # 5. DIE EXAKTE HMI-ZUSTANDSMATRIX (NACH PPT SEITE 2)
 # ==========================================
-# Hier sind alle Instanzen exakt, statisch und fehlerfrei aus der PPT hinterlegt.
 HMI_MATRIX = {
     "Besucher": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": ["Ausstattung innen", "Ausstattung außen"]},
@@ -178,15 +177,21 @@ if "messages" not in st.session_state:
 if "aktive_aktion" not in st.session_state:
     st.session_state.aktive_aktion = None
 if "vorherige_rolle" not in st.session_state:
-    st.session_state.vorherige_rolle = "Bitte auswählen..."
+    st.session_state.vorherige_rolle = None
 
 def clear_all_dropdown_selections():
     for key in list(st.session_state.keys()):
         if key.startswith("sub_cat_wahl_"):
             del st.session_state[key]
 
-# 1. Schritt: Rollenauswahl
-nutzer_rolle = st.selectbox("Wer bist du?", ["Bitte auswählen...", "Besucher", "Eigentümer", "Administrator", "Handwerker/Helfer"])
+# Issue 39 gelöst: "Wer bist du?" direkt als sauberer Placeholder im Drop-down integriert
+nutzer_rolle = st.selectbox(
+    label="Hidden_Rollen_Label",
+    options=["Besucher", "Eigentümer", "Administrator", "Handwerker/Helfer"],
+    index=None,
+    placeholder="Wer bist du?",
+    label_visibility="collapsed"
+)
 
 # Dynamik bei Änderung der Rolle weiter oben umsetzen
 if nutzer_rolle != st.session_state.vorherige_rolle:
@@ -196,7 +201,7 @@ if nutzer_rolle != st.session_state.vorherige_rolle:
     clear_all_dropdown_selections()
     st.rerun()
 
-if nutzer_rolle != "Bitte auswählen...":
+if nutzer_rolle is not None:
     st.write("---")
     st.subheader("Mein Anliegen:")
     
@@ -245,16 +250,13 @@ if nutzer_rolle != "Bitte auswählen...":
     # ==========================================
     # 6. ABSOLUT SYNCHRONE GEGENFRAGEN & DROP-DOWNS
     # ==========================================
-    # Hier ziehen wir die Instanzdaten direkt, ohne Logik-Verzögerung, aus der HMI_MATRIX
     if st.session_state.aktive_aktion and nutzer_rolle in HMI_MATRIX:
         aktiver_state = HMI_MATRIX[nutzer_rolle].get(st.session_state.aktive_aktion)
         
         if aktiver_state:
             st.write("")
-            # Issue 33 & 35 gelöst: Der Text MUSS jetzt zum gedrückten Button passen
             st.info(f"**Villa Avatar:** {aktiver_state['text']}")
             
-            # Issue 36 & 37 gelöst: Die Drop-downs sind fest an die Matrix gekoppelt
             kategorien_fuer_rolle = aktiver_state["dd"]
             konkrete_auswahlen = {}
             
@@ -287,8 +289,9 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if prompt := st.chat_input("Wie kann ich helfen?"):
-    if nutzer_rolle == "Bitte auswählen...":
+# Issue 40 gelöst: Neues, smartphone-optimiertes Eingabefeld inklusive Mikrofon-Symbol
+if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
+    if nutzer_rolle is None:
         st.warning("Bitte wähle oben zuerst aus, wer du bist!")
     elif not st.session_state.aktive_aktion:
         st.warning("Bitte wähle oben zuerst ein Anliegen aus!")
