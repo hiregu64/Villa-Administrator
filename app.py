@@ -137,15 +137,6 @@ st.markdown("""
     div[data-testid="stChatMessage"]:has(div[aria-label="Chat message from user"]) div[data-testid="stMarkdownContainer"] p {
         text-align: right !important;
     }
-    
-    /* Rechtsbündiges Styling für die Anliegen-Zeile mit Icon (Issue 46) */
-    .rechtsbuendig-titel {
-        text-align: right;
-        font-size: 1.25rem;
-        font-weight: bold;
-        margin-top: 1rem;
-        margin-bottom: 0.5rem;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -212,10 +203,16 @@ if nutzer_rolle != st.session_state.vorherige_rolle:
 if nutzer_rolle is not None:
     st.write("---")
     
-    # Issue 46 gelöst: Überschrift ist rechtsbündig und hat das rote/Kopf-Benutzersymbol (👤)
-    st.markdown('<div class="rechtsbuendig-titel">Mein Anliegen: 👤</div>', unsafe_allow_html=True)
+    # Einheitliche, fette und rechtsbündige Formatierung im nativen App-Stil (Issue 46 & 48)
+    with st.container():
+        st.markdown(
+            "<div style='text-align: right; font-weight: bold; font-size: 1.2rem; font-family: inherit; margin-bottom: 10px;'>"
+            "Mein Anliegen: 🧑‍💻"
+            "</div>", 
+            unsafe_allow_html=True
+        )
     
-    # Exaktes Zeichnen der Knöpfe (Platzierung bleibt exakt wie gehabt)
+    # Exaktes Zeichnen der Knöpfe je nach PPT-Rolle
     if nutzer_rolle == "Besucher":
         col1, col2 = st.columns(2)
         with col1:
@@ -269,8 +266,9 @@ if nutzer_rolle is not None:
         if aktiver_state:
             st.write("")
             
-            # Issue 47 gelöst: Statt reinem Text nutzen wir ein Info-Feld mit Roboter/Avatar-Icon (🤖) für die Chat-Sicht
-            st.info(f"🤖 **Villa Avatar:** {aktiver_state['text']}")
+            # Vollkommen integrierter Chat-Stil für die Gegenfrage (Issue 47 & 48)
+            with st.chat_message("assistant"):
+                st.markdown(f"**Villa Avatar:** {aktiver_state['text']}")
             
             kategorien_fuer_rolle = aktiver_state["dd"]
             konkrete_auswahlen = {}
