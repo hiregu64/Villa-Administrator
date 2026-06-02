@@ -79,7 +79,7 @@ Du bist „Villa Avatar“, der digitale Helfer für die Bewohner und Helfer der
 Beziehe dich bei allgemeinen Abläufen auf 'Villa Wissen_72.jfif' und bei der Wasserversorgung auf 'PXL_20260516_202437801_72.jpg'.
 
 WICHTIGER KONTEXT & VERHALTEN:
-- Antworte immer kurz, präzise and smartphone-optimiert.
+- Antworte immer kurz, präzise und smartphone-optimiert.
 - Nutze die vom HMI übergebene Rolle und die gewählte Kategorie/Bezeichnung zwingend als Arbeitsgrundlage.
 - Wenn das HMI dir eine konkrete Bezeichnung (z. B. "Beregnungssystem") übergibt, beziehe dich exakt darauf.
 """
@@ -145,12 +145,18 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "aktive_aktion" not in st.session_state:
     st.session_state.aktive_aktion = None
-if "aktive_frage" not in st.session_state:
-    st.session_state.aktive_frage = None
 if "vorherige_rolle" not in st.session_state:
     st.session_state.vorherige_rolle = "Bitte auswählen..."
 
-# Funktion zum radikalen Leeren der Drop-down-Auswahlen im Cache
+# Feste, unveränderliche Zuordnung der Fragetext-Gegenfragen laut PPT Seite 2
+TEXT_MATRIX = {
+    "Hilfe": "Wobei kann ich dir helfen?",
+    "Information": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.",
+    "Störung": "Was ist passiert?",
+    "Bericht": "Nenne mir bitte den Zeitraum und das Thema.",
+    "Änderung": "Beschreibe deine Änderung so genau wie möglich."
+}
+
 def clear_all_dropdown_selections():
     for key in list(st.session_state.keys()):
         if key.startswith("sub_cat_wahl_"):
@@ -162,7 +168,6 @@ nutzer_rolle = st.selectbox("Wer bist du?", ["Bitte auswählen...", "Besucher", 
 if nutzer_rolle != st.session_state.vorherige_rolle:
     st.session_state.vorherige_rolle = nutzer_rolle
     st.session_state.aktive_aktion = None
-    st.session_state.aktive_frage = None
     st.session_state.messages = []  
     clear_all_dropdown_selections()
     st.rerun()
@@ -171,20 +176,18 @@ if nutzer_rolle != "Bitte auswählen...":
     st.write("---")
     st.subheader("Mein Anliegen:")
     
-    # Issue 33 & 35 gelöst: Direktes Abfangen des Button-Klicks für synchronen Wechsel
+    # Issue 37 gelöst: Präzise, voneinander getrennte State-Zuweisung pro Button-Klick
     if nutzer_rolle == "Besucher":
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
                 clear_all_dropdown_selections()
                 st.session_state.aktive_aktion = "Hilfe"
-                st.session_state.aktive_frage = "Wobei kann ich dir helfen?"
                 st.rerun()
         with col2:
             if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
                 clear_all_dropdown_selections()
                 st.session_state.aktive_aktion = "Störung"
-                st.session_state.aktive_frage = "Was ist passiert?"
                 st.rerun()
     else:
         col1, col2, col3 = st.columns(3)
@@ -193,45 +196,44 @@ if nutzer_rolle != "Bitte auswählen...":
             if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
                 clear_all_dropdown_selections()
                 st.session_state.aktive_aktion = "Hilfe"
-                st.session_state.aktive_frage = "Wobei kann ich dir helfen?"
                 st.rerun()
         with col2:
             if st.button("Ich habe neue Informationen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Information" else "secondary"):
                 clear_all_dropdown_selections()
                 st.session_state.aktive_aktion = "Information"
-                st.session_state.aktive_frage = "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu."
                 st.rerun()
         with col3:
             if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
                 clear_all_dropdown_selections()
                 st.session_state.aktive_aktion = "Störung"
-                st.session_state.aktive_frage = "Was ist passiert?"
                 st.rerun()
         with col4:
             if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
                 clear_all_dropdown_selections()
                 st.session_state.aktive_aktion = "Bericht"
-                st.session_state.aktive_frage = "Nenne mir bitte den Zeitraum und das Thema."
                 st.rerun()
         with col5:
             if st.button("Ich möchte eine Änderung an der Wissensbasis vornehmen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Änderung" else "secondary"):
                 clear_all_dropdown_selections()
                 st.session_state.aktive_aktion = "Änderung"
-                st.session_state.aktive_frage = "Beschreibe deine Änderung so genau wie möglich."
                 st.rerun()
 
     # ==========================================
-    # 5. DROPDOWN-MENÜS (DYNAMISCHER KEY-RESET)
+    # 5. DROPDOWN-MENÜS (MATRIZEN-FILTERUNG)
     # ==========================================
     if st.session_state.aktive_aktion:
         st.write("")
-        # Zeigt jetzt garantiert absolut synchron das gewählte Anliegen an
-        st.info(f"**Villa Avatar:** {st.session_state.aktive_frage}")
+        # Holt sich den Text jetzt dynamisch und absolut fehlerfrei aus der Zuordnungstabelle
+        aktueller_fragetext = TEXT_MATRIX.get(st.session_state.aktive_aktion, "Wie kann ich dir helfen?")
+        st.info(f"**Villa Avatar:** {aktueller_fragetext}")
         
+        # Issue 36 gelöst: Bestimme sichtbare Drop-downs präzise nach PPT-Vorgabe
         kategorien_fuer_rolle = []
         if st.session_state.aktive_aktion == "Hilfe":
+            # "Ich brauche Hilfe" bietet IMMER nur Ausstattung innen & außen an
             kategorien_fuer_rolle = ["Ausstattung innen", "Ausstattung außen"]
         else:
+            # Alle anderen Aktionen filtern basierend auf der angemeldeten Rolle
             if nutzer_rolle == "Handwerker/Helfer":
                 kategorien_fuer_rolle = ["Systeme", "Ausstattung außen"]
             else:
@@ -248,7 +250,6 @@ if nutzer_rolle != "Bitte auswählen...":
                 verfuegbare_bezeichnungen = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
                 verfuegbare_bezeichnungen = sorted([str(b).strip() for b in verfuegbare_bezeichnungen])
                 
-                # Issue 34 Fix: Durch Anhängen der aktiven Aktion an den Key zwingen wir das Widget zum sauberen Leeren
                 wahl = st.selectbox(
                     label=f"Hidden_Label_{kat}", 
                     options=verfuegbare_bezeichnungen,
