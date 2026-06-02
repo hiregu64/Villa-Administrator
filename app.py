@@ -12,7 +12,7 @@ import datetime
 FILE_ID = '1FzhWZuO6aRZkdRuQBzaojhkq7bQDyprl'
 
 # ==========================================
-# 1. LIVE-DATEN AUS GOOGLE DRIVE LESEN
+# 1. LIVE-DATEN AUS GOOGLE DRIVE LESEN (MIT SPINNER)
 # ==========================================
 @st.cache_data(ttl=30)  
 def load_data_from_drive():
@@ -34,7 +34,9 @@ def load_data_from_drive():
         st.error(f"Fehler bei der Verbindung zur Google Drive Wissensbasis: {e}")
         return None, None
 
-df_wissen, drive_service = load_data_from_drive()
+# Visueller Lade-Spinner beim ersten Starten der App oder beim Daten-Refresh
+with st.spinner("Verbindung zur Google Drive Wissensbasis wird hergestellt..."):
+    df_wissen, drive_service = load_data_from_drive()
 
 # ==========================================
 # 2. LIVE-UPDATE IN GOOGLE DRIVE SCHREIBEN
@@ -73,7 +75,6 @@ Beziehe dich bei allgemeinen Abläufen auf 'Villa Wissen_72.jfif' und bei der Wa
 WICHTIGER KONTEXT: Antworte kurz, präzise und smartphone-optimiert. Nutze übergebene Rollen und HMI-Kategorien zwingend als Arbeitsgrundlage.
 """
 
-# Initialisiere den offiziellen Google GenAI Client
 @st.cache_resource
 def get_ki_client():
     if "GEMINI_API_KEY" in st.secrets:
@@ -86,7 +87,6 @@ def generate_ki_response(prompt_text):
     if client is None:
         return "KI-Dienst nicht konfiguriert (API Key fehlt in den Secrets)."
     try:
-        # Das neue SDK nutzt standardmäßig "gemini-2.5-flash" für die stabile v1-API
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt_text,
@@ -96,7 +96,6 @@ def generate_ki_response(prompt_text):
         )
         return response.text
     except Exception as e:
-        # Sicherheits-Fallback auf das 1.5er Modell, falls der Key für 2.5 noch nicht freigeschaltet ist
         try:
             response = client.models.generate_content(
                 model="gemini-1.5-flash",
@@ -201,19 +200,22 @@ if nutzer_rolle != "Bitte auswählen...":
         else:
             st.info(f"Keine Einträge für '{kategorie_auswahl}' hinterlegt.")
 
-    # Verarbeitung der Klicks
+    # Verarbeitung der Klicks (MIT SPINNER FÜR DIE ANTWORT)
     if button_prompt:
         st.session_state.messages.append({"role": "user", "content": f"Aktion gewählt: {gewaehlte_aktion} (Bereich: {kategorie_auswahl})"})
         
         if gewaehlte_aktion in ["Information", "Änderung"] and df_wissen is not None:
-            append_info_to_drive(df_wissen, f"Button-Aktion: {gewaehlte_aktion}", nutzer_rolle, kategorie_auswahl)
+            with st.spinner("Information wird in Excel-Wissensbasis dokumentiert..."):
+                append_info_to_drive(df_wissen, f"Button-Aktion: {gewaehlte_aktion}", nutzer_rolle, kategorie_auswahl)
         
         kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
-        antwort_text = generate_ki_response(
-            f"SYSTEM-BEFEHL: Der Nutzer hat den Button für '{gewaehlte_aktion}' gedrückt. "
-            f"Antworte ihm exakt mit der Spezifikations-Gegenfrage: '{button_prompt}'. "
-            f"Gib keine weiteren Erklärungen ab, sondern warte auf seine Eingabe zum Bereich '{kategorie_auswahl}'. {kontext}"
-        )
+        
+        with st.spinner("Villa formuliert Antwort..."):
+            antwort_text = generate_ki_response(
+                f"SYSTEM-BEFEHL: Der Nutzer hat den Button für '{gewaehlte_aktion}' gedrückt. "
+                f"Antworte ihm exakt mit der Spezifikations-Gegenfrage: '{button_prompt}'. "
+                f"Gib keine weiteren Erklärungen ab, sondern warte auf seine Eingabe zum Bereich '{kategorie_auswahl}'. {kontext}"
+            )
         st.session_state.messages.append({"role": "assistant", "content": antwort_text})
         st.rerun()
 
@@ -229,19 +231,22 @@ if prompt := st.chat_input("Wie kann ich helfen? (z.B. 'Frage: Wo ist der Hauptw
         if prompt.strip().lower().startswith("information:") and df_wissen is not None:
             reiner_text = prompt.split(":", 1)[1].strip()
             kat = kategorie_auswahl if ('kategorie_auswahl' in locals() and kategorie_auswahl != "Alle Einträge") else "Allgemein"
-            erfolg = append_info_to_drive(df_wissen, reiner_text, nutzer_rolle, kat)
+            with st.spinner("Speichere Update direkt in Google Drive..."):
+                erfolg = append_info_to_drive(df_wissen, reiner_text, nutzer_rolle, kat)
             if erfolg:
                 st.success("Eintrag erfolgreich in Google Drive gespeichert!")
                 st.cache_data.clear()
-                df_wissen, _ = load_data_from_drive()
+                with st.spinner("Lade aktualisierte Wissensbasis..."):
+                    df_wissen, _ = load_data_from_drive()
 
-        # KI-Antwort generieren via neuem SDK
+        # KI-Antwort generieren (MIT SPINNER WÄHREND DER GENERIERUNG)
         kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
         with st.chat_message("assistant"):
-            antwort_text = generate_ki_response(
-                f"SYSTEM-KONTEXT: Der Nutzer tippt in der Rolle '{nutzer_rolle}'. "
-                f"Ausgewählter Bereich im HMI: '{kategorie_auswahl if 'kategorie_auswahl' in locals() else 'Alle Einträge'}'.\n"
-                f"Anfrage: {prompt} {kontext}"
-            )
+            with st.spinner("Villa überlegt..."):
+                antwort_text = generate_ki_response(
+                    f"SYSTEM-KONTEXT: Der Nutzer tippt in der Rolle '{nutzer_rolle}'. "
+                    f"Ausgewählter Bereich im HMI: '{kategorie_auswahl if 'kategorie_auswahl' in locals() else 'Alle Einträge'}'.\n"
+                    f"Anfrage: {prompt} {kontext}"
+                )
             st.markdown(antwort_text)
             st.session_state.messages.append({"role": "assistant", "content": antwort_text})
