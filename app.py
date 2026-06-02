@@ -96,7 +96,6 @@ def generate_ki_response(prompt_text):
     if client is None:
         return "KI-Dienst nicht konfiguriert (API Key fehlt in den Secrets)."
     
-    # Hauptversuch mit gemini-2.5-flash
     try:
         response = client.models.generate_content(
             model="gemini-2.5-flash",
@@ -107,7 +106,6 @@ def generate_ki_response(prompt_text):
     except Exception as e:
         error_msg = str(e)
         
-        # Issue 52 gelöst: Bei Quoten-Erschöpfung (429) oder Serverlast (503) automatisch umschalten
         if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "503" in error_msg or "UNAVAILABLE" in error_msg:
             try:
                 response = client.models.generate_content(
@@ -117,7 +115,6 @@ def generate_ki_response(prompt_text):
                 )
                 return response.text
             except Exception as e_fallback:
-                # Fallback-Schutz, falls beide Modelle das Limit für diesen Tag überschritten haben
                 if "429" in str(e_fallback) or "RESOURCE_EXHAUSTED" in str(e_fallback):
                     return "🛑 Das tägliche kostenlose Abfrage-Limit der Villa Avatar ist leider für heute aufgebraucht. Bitte versuche es morgen wieder!"
                 return "⏳ Die KI-Server sind aktuell stark ausgelastet. Bitte warte einen kurzen Moment und sende deine Nachricht noch einmal."
@@ -129,10 +126,12 @@ def generate_ki_response(prompt_text):
 # ==========================================
 st.set_page_config(page_title="Villa Avatar", page_icon="☀️", layout="centered")
 
+# Styling-Bereich erweitert um Issue 52 (Ausgewählte Buttons in zartem Blau)
 st.markdown("""
     <style>
     div[data-testid="stSelectbox"] div[data-baseweb="select"] { font-weight: bold; font-size: 15px; }
     
+    /* Umkehrung und Hintergrund für User-Chatverlauf */
     div[data-testid="stChatMessage"]:has(div[aria-label="Chat message from user"]) {
         flex-direction: row-reverse !important;
         background-color: rgba(0, 0, 0, 0.03) !important;
@@ -145,6 +144,18 @@ st.markdown("""
     }
     div[data-testid="stChatMessage"]:has(div[aria-label="Chat message from user"]) div[data-testid="stMarkdownContainer"] p {
         text-align: right !important;
+    }
+    
+    /* Issue 52 gelöst: Primary-Buttons (ausgewählt) von Rot in ein zartes Blau umfärben */
+    button[data-testid="stBaseButton-primary"] {
+        background-color: #e1f5fe !important;
+        color: #0288d1 !important;
+        border: 1px solid #b3e5fc !important;
+    }
+    button[data-testid="stBaseButton-primary"]:hover {
+        background-color: #b3e5fc !important;
+        color: #01579b !important;
+        border: 1px solid #81d4fa !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -211,13 +222,13 @@ if nutzer_rolle != st.session_state.vorherige_rolle:
 if nutzer_rolle is not None:
     st.write("---")
     
-    # Issue 50 & 51 gelöst: Exakter Nachbau des nativen roten Streamlit-User-Icons per Inline-SVG
+    # Issue 53 gelöst: Das Benutzer-Icon erstrahlt nun in einem zarten Grün (#e8f5e9) mit waldgrüner Linienführung (#2e7d32)
     with st.container():
         st.markdown(
             "<div style='display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 10px;'>"
             "<span style='font-weight: bold; font-size: 1.2rem; font-family: inherit;'>Mein Anliegen:</span>"
-            "<div style='width: 32px; height: 32px; background-color: rgb(255, 75, 75); border-radius: 8px; display: flex; align-items: center; justify-content: center;'>"
-            "<svg viewBox='0 0 24 24' width='20' height='20' stroke='white' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'>"
+            "<div style='width: 32px; height: 32px; background-color: #e8f5e9; border-radius: 8px; display: flex; align-items: center; justify-content: center; border: 1px solid #c8e6c9;'>"
+            "<svg viewBox='0 0 24 24' width='20' height='20' stroke='#2e7d32' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'>"
             "<circle cx='12' cy='12' r='10'></circle>"
             "<path d='M8 14s1.5 2 4 2 4-2 4-2'></path>"
             "<line x1='9' y1='9' x2='9.01' y2='9'></line>"
@@ -282,7 +293,6 @@ if nutzer_rolle is not None:
         if aktiver_state:
             st.write("")
             
-            # Issue 49 gelöst: Sauberer Übergang in die Gegenfrage ohne Textdoppelungen
             with st.chat_message("assistant"):
                 st.markdown(aktiver_state['text'])
             
