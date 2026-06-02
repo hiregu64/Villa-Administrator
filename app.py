@@ -72,7 +72,7 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return False
 
 # ==========================================
-# 3. KI-GEHIRN (PPT-KONFORMER SYSTEM-PROMPT)
+# 3. KI-GEHIRN (PPT-KONFORM & QUOTEN-OPTIMIERT)
 # ==========================================
 VILLA_PROMPT = """
 Du bist „Villa Avatar“, der digitale Helfer für die Bewohner, Eigentümer und Admins der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses so einfach wie möglich zu halten.
@@ -95,6 +95,8 @@ client = get_ki_client()
 def generate_ki_response(prompt_text):
     if client is None:
         return "KI-Dienst nicht konfiguriert (API Key fehlt in den Secrets)."
+    
+    # Hauptversuch mit gemini-2.5-flash
     try:
         response = client.models.generate_content(
             model="gemini-2.5-flash",
@@ -103,17 +105,24 @@ def generate_ki_response(prompt_text):
         )
         return response.text
     except Exception as e:
-        if "503" in str(e) or "UNAVAILABLE" in str(e):
-            return "⏳ Die Google Gemini Server sind aktuell stark ausgelastet. Bitte warte einen kurzen Moment und sende deine Nachricht gleich noch einmal!"
-        try:
-            response = client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=prompt_text,
-                config=types.GenerateContentConfig(system_instruction=VILLA_PROMPT)
-            )
-            return response.text
-        except Exception:
-            return f"Fehler bei der KI-Verarbeitung: {e}"
+        error_msg = str(e)
+        
+        # Issue 52 gelöst: Bei Quoten-Erschöpfung (429) oder Serverlast (503) automatisch umschalten
+        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "503" in error_msg or "UNAVAILABLE" in error_msg:
+            try:
+                response = client.models.generate_content(
+                    model="gemini-1.5-flash",
+                    contents=prompt_text,
+                    config=types.GenerateContentConfig(system_instruction=VILLA_PROMPT)
+                )
+                return response.text
+            except Exception as e_fallback:
+                # Fallback-Schutz, falls beide Modelle das Limit für diesen Tag überschritten haben
+                if "429" in str(e_fallback) or "RESOURCE_EXHAUSTED" in str(e_fallback):
+                    return "🛑 Das tägliche kostenlose Abfrage-Limit der Villa Avatar ist leider für heute aufgebraucht. Bitte versuche es morgen wieder!"
+                return "⏳ Die KI-Server sind aktuell stark ausgelastet. Bitte warte einen kurzen Moment und sende deine Nachricht noch einmal."
+        
+        return f"Fehler bei der KI-Verarbeitung: {e}"
 
 # ==========================================
 # 4. BENUTZEROBERFLÄCHE (HMI) & STYLING
@@ -202,7 +211,7 @@ if nutzer_rolle != st.session_state.vorherige_rolle:
 if nutzer_rolle is not None:
     st.write("---")
     
-    # Issue 51 gelöst: Exakter Nachbau des roten runden Smiley-User-Icons per Inline-CSS/SVG
+    # Issue 50 & 51 gelöst: Exakter Nachbau des nativen roten Streamlit-User-Icons per Inline-SVG
     with st.container():
         st.markdown(
             "<div style='display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 10px;'>"
@@ -273,6 +282,7 @@ if nutzer_rolle is not None:
         if aktiver_state:
             st.write("")
             
+            # Issue 49 gelöst: Sauberer Übergang in die Gegenfrage ohne Textdoppelungen
             with st.chat_message("assistant"):
                 st.markdown(aktiver_state['text'])
             
