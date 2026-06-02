@@ -114,9 +114,8 @@ def generate_ki_response(prompt_text):
             return f"Fehler bei der KI-Verarbeitung: {e}"
 
 # ==========================================
-# 4. BENUTZEROBERFLÄCHE (HMI - REIHENFOLGE NACH ISSUE 18)
+# 4. BENUTZEROBERFLÄCHE (HMI)
 # ==========================================
-# Issue 17: Neuer Titel im Browsertab
 st.set_page_config(page_title="Villa Avatar", page_icon="☀️", layout="centered")
 
 # Styling für fettgedruckte Drop-down Bezeichnungen
@@ -126,110 +125,101 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Titel auf der Oberfläche
 st.title("☀️ Villa Avatar")
-
-# Issue 18: Neuer Begrüßungstext direkt unter dem Titel
 st.markdown("Hallo! Ich bin Villa Avatar, dein digitaler **'Helfer'**! Wähle unten die Rolle aus, um zu beginnen.")
 
-# 4.1 Rollen-Auswahl
-if "vorherige_rolle" not in st.session_state:
-    st.session_state.vorherige_rolle = "Bitte auswählen..."
-
-nutzer_rolle = st.selectbox("Wer bist du?", ["Bitte auswählen...", "Besucher", "Eigentümer", "Administrator", "Handwerker/Helfer"])
-
-# Initialize active action in session state for tracking
+# Session-State Initialisierungen
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 if "aktive_aktion" not in st.session_state:
     st.session_state.aktive_aktion = None
 if "aktive_frage" not in st.session_state:
     st.session_state.aktive_frage = None
+if "vorherige_rolle" not in st.session_state:
+    st.session_state.vorherige_rolle = "Bitte auswählen..."
 
-# Helper-Funktion zum Zurücksetzen der Drop-downs bei Änderungen im HMI (Issue 16)
-def reset_dropdowns():
+# Callback-Funktion zum sauberen Löschen der Dropdown-Filter im State
+def reset_dropdown_selections():
     for key in list(st.session_state.keys()):
-        if key.startswith("sub_cat_"):
+        if key.startswith("sub_cat_wahl_"):
             del st.session_state[key]
+
+# Callback-Funktionen für die Buttons (Issue 23 & 24: Garantiert 1-Klick-Wechsel inkl. neuer Frage)
+def handle_button_click(aktion_name, frage_text):
+    reset_dropdown_selections()
+    st.session_state.aktive_aktion = aktion_name
+    st.session_state.aktive_frage = frage_text
+
+# 4.1 Rollen-Auswahl
+nutzer_rolle = st.selectbox("Wer bist du?", ["Bitte auswählen...", "Besucher", "Eigentümer", "Administrator", "Handwerker/Helfer"])
 
 # Automatischer UI-Reset bei Rollenwechsel
 if nutzer_rolle != st.session_state.vorherige_rolle:
     st.session_state.vorherige_rolle = nutzer_rolle
     st.session_state.aktive_aktion = None
     st.session_state.aktive_frage = None
-    reset_dropdowns()
-
-# Chat-Verlauf im Session-State initialisieren
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+    reset_dropdown_selections()
 
 # Wenn eine Rolle gewählt wurde, zeige "Mein Anliegen" und die Buttons
 if nutzer_rolle != "Bitte auswählen...":
     st.write("---")
-    
-    # Issue 18: Überschrift "Mein Anliegen"
     st.subheader("Mein Anliegen:")
     
-    # Erkennung und visuelles Feedback für Button-Klicks (Issue 19: Farbiger Button via type="primary")
+    # Issue 19/23: Die Buttons nutzen nun Callbacks für sofortiges Feedback im selben Frame
     if nutzer_rolle == "Besucher":
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("ℹ️ Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
-                reset_dropdowns()
-                st.session_state.aktive_aktion = "Hilfe"
-                st.session_state.aktive_frage = "Was möchtest du wissen?"
+            st.button("ℹ️ Ich brauche Hilfe.", use_container_width=True, 
+                      type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary",
+                      on_click=handle_button_click, args=("Hilfe", "Was möchtest du wissen?"))
         with col2:
-            if st.button("⚠️ Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
-                reset_dropdowns()
-                st.session_state.aktive_aktion = "Störung"
-                st.session_state.aktive_frage = "Was ist passiert?"
+            st.button("⚠️ Es gibt eine Störung.", use_container_width=True, 
+                      type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary",
+                      on_click=handle_button_click, args=("Störung", "Was ist passiert?"))
     else:
         col1, col2, col3 = st.columns(3)
         col4, col5 = st.columns(2)
         with col1:
-            if st.button("ℹ️ Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
-                reset_dropdowns()
-                st.session_state.aktive_aktion = "Hilfe"
-                st.session_state.aktive_frage = "Was möchtest du wissen?"
+            st.button("ℹ️ Ich brauche Hilfe.", use_container_width=True, 
+                      type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary",
+                      on_click=handle_button_click, args=("Hilfe", "Was möchtest du wissen?"))
         with col2:
-            if st.button("⚠️ Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
-                reset_dropdowns()
-                st.session_state.aktive_aktion = "Störung"
-                st.session_state.aktive_frage = "Was ist passiert?"
+            st.button("⚠️ Es gibt eine Störung.", use_container_width=True, 
+                      type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary",
+                      on_click=handle_button_click, args=("Störung", "Was ist passiert?"))
         with col3:
-            if st.button("📊 Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
-                reset_dropdowns()
-                st.session_state.aktive_aktion = "Bericht"
-                st.session_state.aktive_frage = "Nenne mir bitte den Zeitraum und das Thema."
+            st.button("📊 Ich benötige einen Bericht.", use_container_width=True, 
+                      type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary",
+                      on_click=handle_button_click, args=("Bericht", "Nenne mir bitte den Zeitraum und das Thema."))
         with col4:
-            if st.button("📝 Ich habe neue Informationen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Information" else "secondary"):
-                reset_dropdowns()
-                st.session_state.aktive_aktion = "Information"
-                st.session_state.aktive_frage = "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu."
+            st.button("📝 Ich habe neue Informationen.", use_container_width=True, 
+                      type="primary" if st.session_state.aktive_aktion == "Information" else "secondary",
+                      on_click=handle_button_click, args=("Information", "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu."))
         with col5:
-            if st.button("🛠️ Ich möchte eine Änderung am XLS vornehmen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Änderung" else "secondary"):
-                reset_dropdowns()
-                st.session_state.aktive_aktion = "Änderung"
-                st.session_state.aktive_frage = "Beschreibe deine Änderung so genau wie möglich."
+            st.button("🛠️ Ich möchte eine Änderung am XLS vornehmen.", use_container_width=True, 
+                      type="primary" if st.session_state.aktive_aktion == "Änderung" else "secondary",
+                      on_click=handle_button_click, args=("Änderung", "Beschreibe deine Änderung so genau wie möglich."))
 
     # ==========================================
-    # 5. DIALOG-REIHENFOLGE NACH ISSUE 20
+    # 5. DIALOG-REIHENFOLGE NACH ISSUE 20 & 21
     # ==========================================
     if st.session_state.aktive_aktion:
         st.write("")
         # 1. Stelle die Frage inklusive des Hinweistextes dar
         st.info(f"**Villa Avatar:** {st.session_state.aktive_frage}\n\n*Nutze vielleicht eines der Drop-downs unten, um mir konkret das betreffende Thema zu nennen.*")
         
-        # 2. Biete direkt darunter die Drop-downs an (Issue 15)
-        st.write("")
+        # Bestimme Kategorien pro Rolle
         kategorien_fuer_rolle = []
         if nutzer_rolle == "Besucher":
             kategorien_fuer_rolle = ["Geräte / Ausst. innen", "Geräte / Ausst. außen"]
         elif nutzer_rolle in ["Eigentümer", "Administrator"]:
             kategorien_fuer_rolle = ["Systeme", "Geräte / Ausst. innen", "Geräte / Ausst. außen"]
-        else: # Handwerker/Helfer
+        else:
             kategorien_fuer_rolle = ["Systeme", "Geräte / Ausst. außen"]
 
         konkrete_auswahlen = {}
         
+        # Issue 21: Keine extra Überschrift mehr ("Kategorie-Filter:" gelöscht)
         if df_wissen is not None and not df_wissen.empty:
             spalten = df_wissen.columns.tolist()
             kat_spalte = spalten[0]
@@ -243,25 +233,24 @@ if nutzer_rolle != "Bitte auswählen...":
                 
                 dropdown_optionen = [kat] + verfuegbare_bezeichnungen
                 
+                # Issue 22 Fixed: Saubere Entkopplung der Keys, damit Aufklappen & Auswählen perfekt funktionieren
                 wahl = st.selectbox(
-                    f"{kat}:", 
+                    f"{kat}", 
                     dropdown_optionen,
-                    key=f"sub_cat_{kat}"
+                    key=f"sub_cat_wahl_{kat}"
                 )
                 
                 if wahl != kat:
                     konkrete_auswahlen[kat] = wahl
 
 # ==========================================
-# 6. CHAT-ANZEIGE UND MANUELLER INPUT (ANTWORTZEILE FOLGT NACH DROPDOWNS)
+# 6. CHAT-ANZEIGE UND MANUELLER INPUT
 # ==========================================
 st.write("---")
-# Zeige den bisherigen Chat-Verlauf an
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Manueller Chat-Input ganz unten
 if prompt := st.chat_input("Wie kann ich helfen? (z.B. 'Frage: Wo ist der Hauptwasserhahn?')"):
     if nutzer_rolle == "Bitte auswählen...":
         st.warning("Bitte wähle oben zuerst aus, wer du bist!")
@@ -284,7 +273,7 @@ if prompt := st.chat_input("Wie kann ich helfen? (z.B. 'Frage: Wo ist der Hauptw
                 with st.spinner("Lade aktualisierte Wissensbasis..."):
                     df_wissen, _ = load_data_from_drive()
 
-        # KI-Antwort generieren unter Berücksichtigung des HMI-Kontexts (Issue 15/20)
+        # KI-Antwort generieren
         kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
         hmi_hinweis = f"Ausgewählte HMI-Spezifikation: {json.dumps(konkrete_auswahlen)}" if 'konkrete_auswahlen' in locals() and konkrete_auswahlen else "Keine HMI-Konkretisierung gewählt. Nutze Kontextanalyse für den Nutzertext."
         
