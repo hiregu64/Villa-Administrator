@@ -79,7 +79,7 @@ Du bist „Villa Avatar“, der digitale Helfer für die Bewohner, Eigentümer u
 
 WICHTIGER KONTEXT & VERHALTEN:
 - Antworte immer kurz, präzise und smartphone-optimiert.
-- Nutze die vom HMI übergebene Rolle (Besucher, Eigentümer oder Admin) und die gewählte Kategorie/Bezeichnung zwingend als Arbeitsgrundlage.
+- Nutze die vom HMI übergebene Rolle (Gast, Host oder Admin) und die gewählte Kategorie/Bezeichnung zwingend als Arbeitsgrundlage.
 - Beziehe dich exakt auf die übergebenen Daten aus der Wissensbasis.
 - WICHTIG: Erwähne NIEMALS interne Dateinamen, Bildbezeichnungen (wie '.jfif' oder '.jpg') oder Tabellenstrukturen gegenüber dem Nutzer. Antworte so, als hättest du dieses Wissen einfach im Kopf.
 """
@@ -158,28 +158,27 @@ st.title("☀️ Villa Avatar")
 st.markdown("Hallo! Ich bin Villa Avatar, dein digitaler **'Helfer'**! Wähle unten die Rolle aus, um zu beginnen.")
 
 # ==========================================
-# 5. DIE EXAKTE HMI-ZUSTANDSMATRIX (KORRIGIERT)
+# 5. DIE EXAKTE HMI-ZUSTANDSMATRIX (PPT-KONFORM)
 # ==========================================
-# Die 3 Standard-Dropdowns laut Vorgabe parallel untereinander
 STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
 
 HMI_MATRIX = {
-    "Besucher": {
+    "Gast": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
-        "Feedback": {"text": "Welches Feedback hast du?", "dd": STANDARD_DROPDOWNS}, # Korrigiert laut PPT zu Feedback
+        "Feedback": {"text": "Welches Feedback hast du?", "dd": STANDARD_DROPDOWNS},
         "Störung": {"text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS}
     },
-    "Eigentümer": {
+    "Host": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
         "Information": {"text": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.", "dd": STANDARD_DROPDOWNS},
         "Störung": {"text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS},
-        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": []} # Keine Drop-downs für Berichte
+        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": []}
     },
     "Admin": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
         "Information": {"text": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.", "dd": STANDARD_DROPDOWNS},
         "Störung": {"text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS},
-        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": []}, # Keine Drop-downs für Berichte
+        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": []},
         "Änderung": {"text": "Beschreibe deine Änderung so genau wie möglich.", "dd": STANDARD_DROPDOWNS}
     }
 }
@@ -201,7 +200,7 @@ def handle_button_click(aktions_name):
 
 nutzer_rolle = st.selectbox(
     label="Hidden_Rollen_Label",
-    options=["Besucher", "Eigentümer", "Admin"],
+    options=["Gast", "Host", "Admin"],
     index=None,
     placeholder="Wer bist du?",
     label_visibility="collapsed"
@@ -235,8 +234,7 @@ if nutzer_rolle is not None:
             unsafe_allow_html=True
         )
     
-    # Issue 62: Besucher zeigt nun exakt die 3 PPT-konformen Use Cases an (inkl. Feedback)
-    if nutzer_rolle == "Besucher":
+    if nutzer_rolle == "Gast":
         col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
@@ -247,3 +245,113 @@ if nutzer_rolle is not None:
         with col3:
             if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
                 handle_button_click("Störung")
+                
+    elif nutzer_rolle == "Admin":
+        col1, col2, col3 = st.columns(3)
+        col4, col5 = st.columns(2)
+        with col1:
+            if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
+                handle_button_click("Hilfe")
+        with col2:
+            if st.button("Ich habe neue Informationen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Information" else "secondary"):
+                handle_button_click("Information")
+        with col3:
+            if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
+                handle_button_click("Störung")
+        with col4:
+            if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
+                handle_button_click("Bericht")
+        with col5:
+            if st.button("Ich möchte eine Änderung an der Wissensbasis vornehmen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Änderung" else "secondary"):
+                handle_button_click("Änderung")
+                
+    else:  # Host
+        col1, col2 = st.columns(2)
+        col3, col4 = st.columns(2)
+        with col1:
+            if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
+                handle_button_click("Hilfe")
+        with col2:
+            if st.button("Ich habe neue Informationen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Information" else "secondary"):
+                handle_button_click("Information")
+        with col3:
+            if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
+                handle_button_click("Störung")
+        with col4:
+            if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
+                handle_button_click("Bericht")
+
+    if st.session_state.aktive_aktion and nutzer_rolle in HMI_MATRIX:
+        aktiver_state = HMI_MATRIX[nutzer_rolle].get(st.session_state.aktive_aktion)
+        
+        if aktiver_state:
+            st.write("")
+            with st.chat_message("assistant"):
+                st.markdown(aktiver_state['text'])
+            
+            kategorien_fuer_rolle = aktiver_state["dd"]
+            
+            if df_wissen is not None and not df_wissen.empty:
+                kat_spalte = df_wissen.columns[0]
+                bez_spalte = df_wissen.columns[1] if len(df_wissen.columns) > 1 else df_wissen.columns[0]
+
+                for kat in kategorien_fuer_rolle:
+                    # Issue 61 Fix: Case-insensitiver Abgleich
+                    mask = df_wissen[kat_spalte].astype(str).str.strip().str.lower() == kat.strip().lower()
+                    verfuegbare_bezeichnungen = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
+                    verfuegbare_bezeichnungen = sorted([str(b).strip() for b in verfuegbare_bezeichnungen])
+                    
+                    st.selectbox(
+                        label=f"Hidden_Label_{kat}", 
+                        options=verfuegbare_bezeichnungen,
+                        index=None,
+                        placeholder=f"📍 {kat} wählen...",
+                        key=f"sub_cat_wahl_{kat}_{st.session_state.aktive_aktion}",
+                        label_visibility="collapsed"
+                    )
+
+st.write("---")
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
+    if nutzer_rolle is None:
+        st.warning("Bitte wähle oben zuerst aus, wer du bist!")
+    elif not st.session_state.aktive_aktion:
+        st.warning("Bitte wähle oben zuerst ein Anliegen aus!")
+    else:
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        
+        # Robustes Auslesen der Auswahlen aus dem State
+        konkrete_auswahlen = {}
+        if st.session_state.aktive_aktion and nutzer_rolle in HMI_MATRIX:
+            for kat in HMI_MATRIX[nutzer_rolle][st.session_state.aktive_aktion]["dd"]:
+                key = f"sub_cat_wahl_{kat}_{st.session_state.aktive_aktion}"
+                if key in st.session_state and st.session_state[key] is not None:
+                    konkrete_auswahlen[kat] = st.session_state[key]
+        
+        gewaehlte_objekte_str = ", ".join([f"{k}: {v}" for k, v in konkrete_auswahlen.items()]) if konkrete_auswahlen else "Keines ausgewählt"
+        
+        # Datenspeicherung bei Information oder Feedback
+        if st.session_state.aktive_aktion in ["Information", "Feedback"] and df_wissen is not None:
+            kat_text = ", ".join(konkrete_auswahlen.keys()) if konkrete_auswahlen else "Allgemein"
+            with st.spinner("Eintrag wird in Google Drive gespeichert..."):
+                append_info_to_drive(df_wissen, prompt, nutzer_rolle, kat_text)
+                st.cache_data.clear()
+                df_wissen, _ = load_data_from_drive()
+
+        kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
+        
+        with st.chat_message("assistant"):
+            with st.spinner("Villa Avatar überlegt..."):
+                antwort_text = generate_ki_response(
+                    f"Rolle: {nutzer_rolle}\n"
+                    f"Kontext-Aktion des Nutzers: {st.session_state.aktive_aktion}\n"
+                    f"Gewählte(s) HMI-Objekt(e): {gewaehlte_objekte_str}\n"
+                    f"Anfrage: {prompt} {kontext}"
+                )
+            st.markdown(antwort_text)
+            st.session_state.messages.append({"role": "assistant", "content": antwort_text})
