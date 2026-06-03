@@ -96,7 +96,6 @@ def generate_ki_response(prompt_text):
     if client is None:
         return "KI-Dienst nicht konfiguriert (API Key fehlt in den Secrets)."
     
-    # Hauptversuch mit gemini-2.5-flash
     try:
         response = client.models.generate_content(
             model="gemini-2.5-flash",
@@ -106,8 +105,6 @@ def generate_ki_response(prompt_text):
         return response.text
     except Exception as e:
         error_msg = str(e)
-        
-        # Issue 52 gelöst: Bei Quoten-Erschöpfung (429) oder Serverlast (503) automatisch umschalten
         if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "503" in error_msg or "UNAVAILABLE" in error_msg:
             try:
                 response = client.models.generate_content(
@@ -117,7 +114,6 @@ def generate_ki_response(prompt_text):
                 )
                 return response.text
             except Exception as e_fallback:
-                # Fallback-Schutz, falls beide Modelle das Limit für diesen Tag überschritten haben
                 if "429" in str(e_fallback) or "RESOURCE_EXHAUSTED" in str(e_fallback):
                     return "🛑 Das tägliche kostenlose Abfrage-Limit der Villa Avatar ist leider für heute aufgebraucht. Bitte versuche es morgen wieder!"
                 return "⏳ Die KI-Server sind aktuell stark ausgelastet. Bitte warte einen kurzen Moment und sende deine Nachricht noch einmal."
@@ -125,14 +121,24 @@ def generate_ki_response(prompt_text):
         return f"Fehler bei der KI-Verarbeitung: {e}"
 
 # ==========================================
-# 4. BENUTZEROBERFLÄCHE (HMI) & STYLING
+# 4. BENUTZEROBERFLÄCHE (HMI) & STYLING (ISSUE 52)
 # ==========================================
 st.set_page_config(page_title="Villa Avatar", page_icon="☀️", layout="centered")
 
 st.markdown("""
     <style>
+    /* Issue 52: Zartes Blau für aktive Buttons */
+    div.stButton > button[kind="primary"] {
+        background-color: #e3f2fd !important;
+        color: #1565c0 !important;
+        border: 1px solid #bbdefb !important;
+        font-weight: bold !important;
+    }
+    div.stButton > button[kind="primary"]:hover {
+        background-color: #bbdefb !important;
+        border: 1px solid #64b5f6 !important;
+    }
     div[data-testid="stSelectbox"] div[data-baseweb="select"] { font-weight: bold; font-size: 15px; }
-    
     div[data-testid="stChatMessage"]:has(div[aria-label="Chat message from user"]) {
         flex-direction: row-reverse !important;
         background-color: rgba(0, 0, 0, 0.03) !important;
@@ -153,7 +159,7 @@ st.title("☀️ Villa Avatar")
 st.markdown("Hallo! Ich bin Villa Avatar, dein digitaler **'Helfer'**! Wähle unten die Rolle aus, um zu beginnen.")
 
 # ==========================================
-# 5. DIE EXAKTE HMI-ZUSTANDSMATRIX (REIN PPT-KONFORM)
+# 5. DIE EXAKTE HMI-ZUSTANDSMATRIX
 # ==========================================
 HMI_MATRIX = {
     "Besucher": {
@@ -190,7 +196,6 @@ def handle_button_click(aktions_name):
     st.session_state.messages = []  
     st.rerun()
 
-# Kompakte Rollenauswahl
 nutzer_rolle = st.selectbox(
     label="Hidden_Rollen_Label",
     options=["Besucher", "Eigentümer", "Admin"],
@@ -211,7 +216,6 @@ if nutzer_rolle != st.session_state.vorherige_rolle:
 if nutzer_rolle is not None:
     st.write("---")
     
-    # Issue 50 & 51 gelöst: Exakter Nachbau des nativen roten Streamlit-User-Icons per Inline-SVG
     with st.container():
         st.markdown(
             "<div style='display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 10px;'>"
@@ -228,7 +232,6 @@ if nutzer_rolle is not None:
             unsafe_allow_html=True
         )
     
-    # Exaktes Zeichnen der Knöpfe je nach PPT-Rolle
     if nutzer_rolle == "Besucher":
         col1, col2 = st.columns(2)
         with col1:
@@ -273,16 +276,11 @@ if nutzer_rolle is not None:
             if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
                 handle_button_click("Bericht")
 
-    # ==========================================
-    # 6. ABSOLUT SYNCHRONE GEGENFRAGEN & DROP-DOWNS
-    # ==========================================
     if st.session_state.aktive_aktion and nutzer_rolle in HMI_MATRIX:
         aktiver_state = HMI_MATRIX[nutzer_rolle].get(st.session_state.aktive_aktion)
         
         if aktiver_state:
             st.write("")
-            
-            # Issue 49 gelöst: Sauberer Übergang in die Gegenfrage ohne Textdoppelungen
             with st.chat_message("assistant"):
                 st.markdown(aktiver_state['text'])
             
@@ -310,9 +308,6 @@ if nutzer_rolle is not None:
                     if wahl is not None:
                         konkrete_auswahlen[kat] = wahl
 
-# ==========================================
-# 7. CHAT-ANZEIGE UND MANUELLER INPUT
-# ==========================================
 st.write("---")
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
