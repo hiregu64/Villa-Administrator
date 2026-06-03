@@ -8,7 +8,7 @@ import pandas as pd
 import io
 import datetime
 import json
-import openpyxl  # Wichtig für die Formatierungssicherheit!
+import openpyxl  # Sichert die Formatierung beim Schreiben
 
 # Google File ID der Excel-Tabelle
 FILE_ID = '1FzhWZuO6aRZkdRuQBzaojhkq7bQDyprl'
@@ -46,11 +46,10 @@ with st.spinner("Verbindung zur Google Drive Wissensbasis wird hergestellt..."):
     df_wissen, drive_service = load_data_from_drive()
 
 # ==========================================
-# 2. DESIGN-SICHERES UPDATE (INFORMATION & FEEDBACK: Reihe anhängen)
+# 2. DESIGN-SICHERES UPDATE (Reihe anhängen)
 # ==========================================
 def append_info_to_drive(service, neuer_text, nutzername, kategorie="Nicht definiert"):
     try:
-        # 1. Datei als Bytes herunterladen
         request = service.files().get_media(fileId=FILE_ID)
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
@@ -59,19 +58,15 @@ def append_info_to_drive(service, neuer_text, nutzername, kategorie="Nicht defin
             _, done = downloader.next_chunk()
         fh.seek(0)
         
-        # 2. Mit openpyxl laden (behält alle Farben und Spaltenbreiten bei!)
         wb = openpyxl.load_workbook(fh)
         ws = wb.active
         
-        # Nächste freie Zeile bestimmen
         next_row = ws.max_row + 1
         zeitstempel = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
         
-        # Spalte A und B beschreiben
         ws.cell(row=next_row, column=1, value=f"Update: {neuer_text}")
         ws.cell(row=next_row, column=2, value=kategorie)
         
-        # Dynamisch Spalten für Zeitstempel und Nutzer in Zeile 1 suchen
         headers = [str(cell.value).strip() for cell in ws[1]]
         
         if "Zeitstempel" in headers:
@@ -85,7 +80,6 @@ def append_info_to_drive(service, neuer_text, nutzername, kategorie="Nicht defin
         else:
             ws.cell(row=next_row, column=len(headers) + 1, value=nutzername)
         
-        # 3. Datei zurückschreiben
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
@@ -99,11 +93,10 @@ def append_info_to_drive(service, neuer_text, nutzername, kategorie="Nicht defin
         return False
 
 # ==========================================
-# 2b. DESIGN-SICHERES STÖRUNGSLOG (Spalten J & K editieren)
+# 2b. DESIGN-SICHERES STÖRUNGSLOG (Spalten J & K)
 # ==========================================
 def update_stoerung_in_drive(service, stoerung_text, nutzername, objekt_name=None):
     try:
-        # 1. Datei herunterladen
         request = service.files().get_media(fileId=FILE_ID)
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
@@ -112,21 +105,18 @@ def update_stoerung_in_drive(service, stoerung_text, nutzername, objekt_name=Non
             _, done = downloader.next_chunk()
         fh.seek(0)
         
-        # 2. Mit openpyxl laden
         wb = openpyxl.load_workbook(fh)
         ws = wb.active
         
         row_idx = None
         
-        # Vorhandenes Objekt in Spalte A suchen
         if objekt_name:
             for r in range(2, ws.max_row + 1):
                 val = ws.cell(row=r, column=1).value
-                if val and str(val).get_text().strip().lower() == str(objekt_name).strip().lower() or str(val).strip().lower() == str(objekt_name).strip().lower():
+                if val and str(val).strip().lower() == str(objekt_name).strip().lower():
                     row_idx = r
                     break
                     
-        # Fallback auf "Nicht gefunden"
         if row_idx is None:
             for r in range(2, ws.max_row + 1):
                 val = ws.cell(row=r, column=1).value
@@ -134,12 +124,10 @@ def update_stoerung_in_drive(service, stoerung_text, nutzername, objekt_name=Non
                     row_idx = r
                     break
                     
-        # Falls "Nicht gefunden" fehlt, neu anlegen
         if row_idx is None:
             row_idx = ws.max_row + 1
             ws.cell(row=row_idx, column=1, value="Nicht gefunden")
 
-        # Spalten J (10) und K (11) beschreiben (inklusive Historie per Zeilenumbruch)
         zeitstempel = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
         
         alt_j = str(ws.cell(row=row_idx, column=10).value) if ws.cell(row=row_idx, column=10).value is not None else ""
@@ -151,7 +139,6 @@ def update_stoerung_in_drive(service, stoerung_text, nutzername, objekt_name=Non
         ws.cell(row=row_idx, column=10, value=neu_j)
         ws.cell(row=row_idx, column=11, value=neu_k)
         
-        # 3. Datei hochladen
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
@@ -358,7 +345,7 @@ if nutzer_rolle is not None:
             if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
                 handle_button_click("Störung")
         with col5:
-            if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
+            if st.button("Ich benötigt einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
                 handle_button_click("Bericht")
 
     elif nutzer_rolle == "Admin":
@@ -393,11 +380,15 @@ if nutzer_rolle is not None:
             
             kategorien_fuer_rolle = aktiver_state["dd"]
             
+            # ==========================================
+            # DYNAMISCHER DROP-DOWN FILTER (ISSUE 65 FIX)
+            # ==========================================
             if df_wissen is not None and not df_wissen.empty:
-                bez_spalte = df_wissen.columns[0]  
-                kat_spalte = df_wissen.columns[1]  
+                bez_spalte = df_wissen.columns[0]  # Spalte A (Bezeichnung)
+                kat_spalte = df_wissen.columns[1]  # Spalte B (Kategorie)
 
                 for kat in kategorien_fuer_rolle:
+                    # 1. Schritt: Nach Kategorie (Spalte B) filtern
                     if "innen" in kat.lower():
                         mask = df_wissen[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
                     elif "außen" in kat.lower() or "aussen" in kat.lower():
@@ -406,6 +397,17 @@ if nutzer_rolle is not None:
                         mask = df_wissen[kat_spalte].astype(str).str.contains("nähe|naehe|In der Nähe", case=False, na=False)
                     else:
                         mask = df_wissen[kat_spalte].astype(str).str.contains(kat, case=False, na=False)
+                    
+                    # 2. Schritt: Präzise Rollen-Filterung über das "X" in den jeweiligen Spalten
+                    if nutzer_rolle == "Gast" and len(df_wissen.columns) > 2:
+                        # Spalte C (Index 2) muss exakt ein "X" enthalten
+                        mask = mask & (df_wissen.iloc[:, 2].astype(str).str.strip().str.upper() == "X")
+                    elif nutzer_rolle == "Host" and len(df_wissen.columns) > 3:
+                        # Spalte D (Index 3) muss exakt ein "X" enthalten
+                        mask = mask & (df_wissen.iloc[:, 3].astype(str).str.strip().str.upper() == "X")
+                    elif nutzer_rolle == "Admin" and len(df_wissen.columns) > 4:
+                        # Spalte E (Index 4) muss exakt ein "X" enthalten
+                        mask = mask & (df_wissen.iloc[:, 4].astype(str).str.strip().str.upper() == "X")
                     
                     verfuegbare_bezeichnungen = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
                     verfuegbare_bezeichnungen = sorted([str(b).strip() for b in verfuegbare_bezeichnungen])
@@ -434,7 +436,6 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
             st.markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
         
-        # Auslesen der aktiven Drop-down Filter
         konkrete_auswahlen = {}
         if st.session_state.aktive_aktion and nutzer_rolle in HMI_MATRIX:
             for kat in HMI_MATRIX[nutzer_rolle][st.session_state.aktive_aktion]["dd"]:
@@ -445,7 +446,7 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         gewaehlte_objekte_str = ", ".join([f"{k}: {v}" for k, v in konkrete_auswahlen.items()]) if konkrete_auswahlen else "Keines ausgewählt"
         gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if konkrete_auswahlen else None
         
-        # 1. LOGIK FÜR INFORMATION / FEEDBACK (Formatsicher anhängen)
+        # 1. LOGIK FÜR INFORMATION / FEEDBACK
         if st.session_state.aktive_aktion in ["Information", "Feedback"] and drive_service is not None:
             kat_text = ", ".join(konkrete_auswahlen.keys()) if konkrete_auswahlen else "Allgemein"
             with st.spinner("Eintrag wird formatsicher in Google Drive gespeichert..."):
@@ -453,7 +454,7 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
                 st.cache_data.clear()
                 df_wissen, _ = load_data_from_drive()
                 
-        # 2. LOGIK FÜR STÖRUNGEN (Formatsicher in Spalten J/K eintragen)
+        # 2. LOGIK FÜR STÖRUNGEN
         elif st.session_state.aktive_aktion == "Störung" and drive_service is not None:
             with st.spinner("Störung wird formatsicher in der Wissensbasis protokolliert..."):
                 update_stoerung_in_drive(drive_service, prompt, nutzer_rolle, gewaehltes_objekt)
