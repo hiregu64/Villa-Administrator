@@ -8,6 +8,7 @@ import pandas as pd
 import io
 import datetime
 import json
+import openpyxl  # Wichtig für die Formatierungssicherheit!
 
 # Google File ID der Excel-Tabelle
 FILE_ID = '1FzhWZuO6aRZkdRuQBzaojhkq7bQDyprl'
@@ -45,26 +46,52 @@ with st.spinner("Verbindung zur Google Drive Wissensbasis wird hergestellt..."):
     df_wissen, drive_service = load_data_from_drive()
 
 # ==========================================
-# 2. LIVE-UPDATE (INFORMATION & FEEDBACK: Zeile anhängen)
+# 2. DESIGN-SICHERES UPDATE (INFORMATION & FEEDBACK: Reihe anhängen)
 # ==========================================
-def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"):
+def append_info_to_drive(service, neuer_text, nutzername, kategorie="Nicht definiert"):
     try:
-        neue_zeile = {
-            df.columns[0]: f"Update: {neuer_text}", 
-            df.columns[1]: kategorie,
-            "Zeitstempel": datetime.datetime.now().strftime("%d.%m.%Y %H:%M"),
-            "Nutzer": nutzername
-        }
+        # 1. Datei als Bytes herunterladen
+        request = service.files().get_media(fileId=FILE_ID)
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        fh.seek(0)
         
-        df_aktualisiert = pd.concat([df, pd.DataFrame([neue_zeile])], ignore_index=True)
+        # 2. Mit openpyxl laden (behält alle Farben und Spaltenbreiten bei!)
+        wb = openpyxl.load_workbook(fh)
+        ws = wb.active
         
+        # Nächste freie Zeile bestimmen
+        next_row = ws.max_row + 1
+        zeitstempel = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
+        
+        # Spalte A und B beschreiben
+        ws.cell(row=next_row, column=1, value=f"Update: {neuer_text}")
+        ws.cell(row=next_row, column=2, value=kategorie)
+        
+        # Dynamisch Spalten für Zeitstempel und Nutzer in Zeile 1 suchen
+        headers = [str(cell.value).strip() for cell in ws[1]]
+        
+        if "Zeitstempel" in headers:
+            ws.cell(row=next_row, column=headers.index("Zeitstempel") + 1, value=zeitstempel)
+        else:
+            ws.cell(row=next_row, column=len(headers) + 1, value=zeitstempel)
+            headers.append("Zeitstempel")
+            
+        if "Nutzer" in headers:
+            ws.cell(row=next_row, column=headers.index("Nutzer") + 1, value=nutzername)
+        else:
+            ws.cell(row=next_row, column=len(headers) + 1, value=nutzername)
+        
+        # 3. Datei zurückschreiben
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_aktualisiert.to_excel(writer, index=False)
+        wb.save(output)
         output.seek(0)
         
         media = MediaIoBaseUpload(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', resumable=True)
-        drive_service.files().update(fileId=FILE_ID, media_body=media).execute()
+        service.files().update(fileId=FILE_ID, media_body=media).execute()
         st.cache_data.clear()  
         return True
     except Exception as e:
@@ -72,53 +99,65 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return False
 
 # ==========================================
-# 2b. STÖRUNGSLOGIK (Spalten J & K aktualisieren)
+# 2b. DESIGN-SICHERES STÖRUNGSLOG (Spalten J & K editieren)
 # ==========================================
-def update_stoerung_in_drive(df, stoerung_text, nutzername, objekt_name=None):
+def update_stoerung_in_drive(service, stoerung_text, nutzername, objekt_name=None):
     try:
-        # Absicherung: Falls die Excel weniger als 11 Spalten eingelesen hat (da leer), auffüllen bis K (Index 10)
-        while len(df.columns) < 11:
-            df[f"Spalte_{len(df.columns)+1}"] = ""
-            
+        # 1. Datei herunterladen
+        request = service.files().get_media(fileId=FILE_ID)
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        fh.seek(0)
+        
+        # 2. Mit openpyxl laden
+        wb = openpyxl.load_workbook(fh)
+        ws = wb.active
+        
         row_idx = None
         
-        # 1. Versuchen, das konkrete ausgewählte Objekt in Spalte A zu finden
+        # Vorhandenes Objekt in Spalte A suchen
         if objekt_name:
-            match = df[df.iloc[:, 0].astype(str).str.strip().str.lower() == str(objekt_name).strip().lower()]
-            if not match.empty:
-                row_idx = match.index[0]
-                
-        # 2. Wenn kein Objekt gewählt wurde oder das Thema unzuordenbar ist -> Zeile "Nicht gefunden" nutzen
+            for r in range(2, ws.max_row + 1):
+                val = ws.cell(row=r, column=1).value
+                if val and str(val).get_text().strip().lower() == str(objekt_name).strip().lower() or str(val).strip().lower() == str(objekt_name).strip().lower():
+                    row_idx = r
+                    break
+                    
+        # Fallback auf "Nicht gefunden"
         if row_idx is None:
-            match_nf = df[df.iloc[:, 0].astype(str).str.strip().str.lower() == "nicht gefunden"]
-            if not match_nf.empty:
-                row_idx = match_nf.index[0]
-            else:
-                # Fallback, falls die Zeile "Nicht gefunden" physisch in Excel fehlt, legen wir sie an
-                neue_zeile = {df.columns[0]: "Nicht gefunden"}
-                df = pd.concat([df, pd.DataFrame([neue_zeile])], ignore_index=True)
-                row_idx = len(df) - 1
+            for r in range(2, ws.max_row + 1):
+                val = ws.cell(row=r, column=1).value
+                if val and str(val).strip().lower() == "nicht gefunden":
+                    row_idx = r
+                    break
+                    
+        # Falls "Nicht gefunden" fehlt, neu anlegen
+        if row_idx is None:
+            row_idx = ws.max_row + 1
+            ws.cell(row=row_idx, column=1, value="Nicht gefunden")
 
-        # Daten für Spalte J (Index 9) und Spalte K (Index 10) vorbereiten & Historie wahren
+        # Spalten J (10) und K (11) beschreiben (inklusive Historie per Zeilenumbruch)
         zeitstempel = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
         
-        alt_j = str(df.iloc[row_idx, 9]) if pd.notna(df.iloc[row_idx, 9]) else ""
-        alt_k = str(df.iloc[row_idx, 10]) if pd.notna(df.iloc[row_idx, 10]) else ""
+        alt_j = str(ws.cell(row=row_idx, column=10).value) if ws.cell(row=row_idx, column=10).value is not None else ""
+        alt_k = str(ws.cell(row=row_idx, column=11).value) if ws.cell(row=row_idx, column=11).value is not None else ""
         
         neu_j = f"{alt_j}\n- {stoerung_text}".strip() if alt_j else f"- {stoerung_text}"
         neu_k = f"{alt_k}\n- {zeitstempel} ({nutzername})".strip() if alt_k else f"- {zeitstempel} ({nutzername})"
         
-        df.iloc[row_idx, 9] = neu_j
-        df.iloc[row_idx, 10] = neu_k
+        ws.cell(row=row_idx, column=10, value=neu_j)
+        ws.cell(row=row_idx, column=11, value=neu_k)
         
-        # Datei zurückschreiben
+        # 3. Datei hochladen
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False)
+        wb.save(output)
         output.seek(0)
         
         media = MediaIoBaseUpload(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', resumable=True)
-        drive_service.files().update(fileId=FILE_ID, media_body=media).execute()
+        service.files().update(fileId=FILE_ID, media_body=media).execute()
         st.cache_data.clear()
         return True
     except Exception as e:
@@ -406,18 +445,18 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         gewaehlte_objekte_str = ", ".join([f"{k}: {v}" for k, v in konkrete_auswahlen.items()]) if konkrete_auswahlen else "Keines ausgewählt"
         gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if konkrete_auswahlen else None
         
-        # 1. LOGIK FÜR INFORMATION / FEEDBACK (Zeile anhängen)
-        if st.session_state.aktive_aktion in ["Information", "Feedback"] and df_wissen is not None:
+        # 1. LOGIK FÜR INFORMATION / FEEDBACK (Formatsicher anhängen)
+        if st.session_state.aktive_aktion in ["Information", "Feedback"] and drive_service is not None:
             kat_text = ", ".join(konkrete_auswahlen.keys()) if konkrete_auswahlen else "Allgemein"
-            with st.spinner("Eintrag wird in Google Drive gespeichert..."):
-                append_info_to_drive(df_wissen, prompt, nutzer_rolle, kat_text)
+            with st.spinner("Eintrag wird formatsicher in Google Drive gespeichert..."):
+                append_info_to_drive(drive_service, prompt, nutzer_rolle, kat_text)
                 st.cache_data.clear()
                 df_wissen, _ = load_data_from_drive()
                 
-        # 2. LOGIK FÜR STÖRUNGEN (Spalte J & K aktualisieren in Zielzeile oder "Nicht gefunden")
-        elif st.session_state.aktive_aktion == "Störung" and df_wissen is not None:
-            with st.spinner("Störung wird in der Wissensbasis (Spalten J/K) protokolliert..."):
-                update_stoerung_in_drive(df_wissen, prompt, nutzer_rolle, gewaehltes_objekt)
+        # 2. LOGIK FÜR STÖRUNGEN (Formatsicher in Spalten J/K eintragen)
+        elif st.session_state.aktive_aktion == "Störung" and drive_service is not None:
+            with st.spinner("Störung wird formatsicher in der Wissensbasis protokolliert..."):
+                update_stoerung_in_drive(drive_service, prompt, nutzer_rolle, gewaehltes_objekt)
                 st.cache_data.clear()
                 df_wissen, _ = load_data_from_drive()
 
