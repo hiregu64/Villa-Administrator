@@ -381,7 +381,7 @@ if nutzer_rolle is not None:
             kategorien_fuer_rolle = aktiver_state["dd"]
             
             # ==========================================
-            # DYNAMISCHER DROP-DOWN FILTER (ISSUE 65 FIX)
+            # DYNAMISCHER DROP-DOWN FILTER
             # ==========================================
             if df_wissen is not None and not df_wissen.empty:
                 bez_spalte = df_wissen.columns[0]  # Spalte A (Bezeichnung)
@@ -400,17 +400,28 @@ if nutzer_rolle is not None:
                     
                     # 2. Schritt: Präzise Rollen-Filterung über das "X" in den jeweiligen Spalten
                     if nutzer_rolle == "Gast" and len(df_wissen.columns) > 2:
-                        # Spalte C (Index 2) muss exakt ein "X" enthalten
                         mask = mask & (df_wissen.iloc[:, 2].astype(str).str.strip().str.upper() == "X")
                     elif nutzer_rolle == "Host" and len(df_wissen.columns) > 3:
-                        # Spalte D (Index 3) muss exakt ein "X" enthalten
                         mask = mask & (df_wissen.iloc[:, 3].astype(str).str.strip().str.upper() == "X")
                     elif nutzer_rolle == "Admin" and len(df_wissen.columns) > 4:
-                        # Spalte E (Index 4) muss exakt ein "X" enthalten
                         mask = mask & (df_wissen.iloc[:, 4].astype(str).str.strip().str.upper() == "X")
                     
+                    # Liste der Optionen auslesen und bereinigen
                     verfuegbare_bezeichnungen = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
-                    verfuegbare_bezeichnungen = sorted([str(b).strip() for b in verfuegbare_bezeichnungen])
+                    verfuegbare_bezeichnungen = [str(b).strip() for b in verfuegbare_bezeichnungen]
+                    
+                    # ==================================================================
+                    # KORREKTUR FÜR ISSUE 66: "Nicht gefunden" an das Ende der Liste setzen
+                    # ==================================================================
+                    if "Nicht gefunden" in verfuegbare_bezeichnungen:
+                        verfuegbare_bezeichnungen.remove("Nicht gefunden")
+                    
+                    # Restliche Items alphabetisch sortieren
+                    verfuegbare_bezeichnungen = sorted(verfuegbare_bezeichnungen)
+                    
+                    # Jetzt "Nicht gefunden" ganz am Ende anhängen
+                    verfuegbare_bezeichnungen.append("Nicht gefunden")
+                    # ==================================================================
                     
                     st.selectbox(
                         label=f"Hidden_Label_{kat}", 
