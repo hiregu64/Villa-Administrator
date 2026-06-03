@@ -32,9 +32,9 @@ def load_data_from_drive():
         fh.seek(0)
         df = pd.read_excel(fh)
         
-        # VERZEICHNIS-LOGIK: Leere Zellen in Spalte A (Kategorie) automatisch auffüllen
-        if df is not None and not df.empty:
-            df.iloc[:, 0] = df.iloc[:, 0].ffill()
+        # Issue 63 Anpassung: Leere Zellen in Spalte B (Kategorie) automatisch auffüllen
+        if df is not None and not df.empty and len(df.columns) > 1:
+            df.iloc[:, 1] = df.iloc[:, 1].ffill()
             
         return df, service
     except Exception as e:
@@ -49,11 +49,12 @@ with st.spinner("Verbindung zur Google Drive Wissensbasis wird hergestellt..."):
 # ==========================================
 def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"):
     try:
+        # Hier halten wir uns an die Logik Spalte A = Bezeichnung/Eintrag, Spalte B = Kategorie
         neue_zeile = {
+            df.columns[0]: f"Update: {neuer_text}", 
+            df.columns[1]: kategorie,
             "Zeitstempel": datetime.datetime.now().strftime("%d.%m.%Y %H:%M"),
-            "Nutzer": nutzername,
-            "Kategorie": kategorie,
-            "Eintrag / Update": neuer_text
+            "Nutzer": nutzername
         }
         
         df_aktualisiert = pd.concat([df, pd.DataFrame([neue_zeile])], ignore_index=True)
@@ -72,7 +73,7 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return False
 
 # ==========================================
-# 3. KI-GEHIRN (PPT-KONFORM & QUOTEN-OPTIMIERT)
+# 3. KI-GEHIRN (SYSTEM-PROMPT AKTUALISIERT - Issue 45 & 63)
 # ==========================================
 VILLA_PROMPT = """
 Du bist „Villa Avatar“, der digitale Helfer für die Bewohner, Eigentümer und Admins der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses so einfach wie möglich zu halten.
@@ -158,7 +159,7 @@ st.title("☀️ Villa Avatar")
 st.markdown("Hallo! Ich bin Villa Avatar, dein digitaler **'Helfer'**! Wähle unten die Rolle aus, um zu beginnen.")
 
 # ==========================================
-# 5. DIE EXAKTE HMI-ZUSTANDSMATRIX (PPT-KONFORM)
+# 5. DIE EXAKTE HMI-ZUSTANDSMATRIX
 # ==========================================
 STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
 
@@ -292,12 +293,20 @@ if nutzer_rolle is not None:
             kategorien_fuer_rolle = aktiver_state["dd"]
             
             if df_wissen is not None and not df_wissen.empty:
-                kat_spalte = df_wissen.columns[0]
-                bez_spalte = df_wissen.columns[1] if len(df_wissen.columns) > 1 else df_wissen.columns[0]
+                bez_spalte = df_wissen.columns[0]  # Spalte A = Bezeichnung
+                kat_spalte = df_wissen.columns[1]  # Spalte B = Kategorie (enthält 'innen', etc.)
 
                 for kat in kategorien_fuer_rolle:
-                    # Issue 61 Fix: Case-insensitiver Abgleich
-                    mask = df_wissen[kat_spalte].astype(str).str.strip().str.lower() == kat.strip().lower()
+                    # Issue 63 Fix: Flexible Teilstring-Suche (enthält 'innen', 'außen', etc.)
+                    if "innen" in kat.lower():
+                        mask = df_wissen[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
+                    elif "außen" in kat.lower() or "aussen" in kat.lower():
+                        mask = df_wissen[kat_spalte].astype(str).str.contains("außen|aussen", case=False, na=False)
+                    elif "nähe" in kat.lower() or "naehe" in kat.lower():
+                        mask = df_wissen[kat_spalte].astype(str).str.contains("nähe|naehe|In der Nähe", case=False, na=False)
+                    else:
+                        mask = df_wissen[kat_spalte].astype(str).str.contains(kat, case=False, na=False)
+                    
                     verfuegbare_bezeichnungen = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
                     verfuegbare_bezeichnungen = sorted([str(b).strip() for b in verfuegbare_bezeichnungen])
                     
