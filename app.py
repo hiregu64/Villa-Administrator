@@ -32,7 +32,7 @@ def load_data_from_drive():
         fh.seek(0)
         df = pd.read_excel(fh)
         
-        # Issue 63 Anpassung: Leere Zellen in Spalte B (Kategorie) automatisch auffüllen
+        # Verzeichnis-Logik für Spalte B (Kategorie) automatisch auffüllen
         if df is not None and not df.empty and len(df.columns) > 1:
             df.iloc[:, 1] = df.iloc[:, 1].ffill()
             
@@ -49,7 +49,7 @@ with st.spinner("Verbindung zur Google Drive Wissensbasis wird hergestellt..."):
 # ==========================================
 def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"):
     try:
-        # Hier halten wir uns an die Logik Spalte A = Bezeichnung/Eintrag, Spalte B = Kategorie
+        # Spalte A = Bezeichnung/Eintrag, Spalte B = Kategorie laut Vorgabe
         neue_zeile = {
             df.columns[0]: f"Update: {neuer_text}", 
             df.columns[1]: kategorie,
@@ -73,16 +73,17 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return False
 
 # ==========================================
-# 3. KI-GEHIRN (SYSTEM-PROMPT AKTUALISIERT - Issue 45 & 63)
+# 3. KI-GEHIRN (SYSTEM-PROMPT)
 # ==========================================
 VILLA_PROMPT = """
-Du bist „Villa Avatar“, der digitale Helfer für die Bewohner, Eigentümer und Admins der Villa. Deine Aufgabe ist es, den Betrieb und Erhalt des Hauses so einfach wie möglich zu halten.
+Du bist „Villa Avatar“, der digitale Helfer für die Gäste (Gast), Gastgeber (Host) und Administratoren (Admin) der Villa. Deine Aufgabe ist es, den Aufenthalt, Betrieb und Erhalt des Hauses so einfach und angenehm wie möglich zu gestalten.
 
 WICHTIGER KONTEXT & VERHALTEN:
-- Antworte immer kurz, präzise und smartphone-optimiert.
-- Nutze die vom HMI übergebene Rolle (Gast, Host oder Admin) und die gewählte Kategorie/Bezeichnung zwingend als Arbeitsgrundlage.
-- Beziehe dich exakt auf die übergebenen Daten aus der Wissensbasis.
-- WICHTIG: Erwähne NIEMALS interne Dateinamen, Bildbezeichnungen (wie '.jfif' oder '.jpg') oder Tabellenstrukturen gegenüber dem Nutzer. Antworte so, als hättest du dieses Wissen einfach im Kopf.
+- Antworte immer kurz, freundlich, präzise und smartphone-optimiert (nutze kurze Absätze oder Aufzählungspunkte).
+- Passe deine Tonalität an die übergebene Rolle an: Zu Gästen (Gast) bist du einladend und herzlich, zu Hosts und Admins agierst du effizient und lösungsorientiert.
+- Beziehe dich bei Antworten exakt auf die mitgegebenen Live-Daten aus der Wissensbasis. 
+- WICHTIG (Wissenslücken): Wenn die mitgegebenen Daten keine Antwort auf die Frage des Nutzers enthalten, erfinde niemals Informationen! Antworte stattdessen: „Dazu liegen mir aktuell leider keine Informationen vor. Ich leite dein Anliegen aber gerne an das Team weiter.“
+- ABSOLUTES VERBOT: Erwähne NIEMALS interne Dateinamen, Bildbezeichnungen (wie '.jfif' oder '.jpg') oder die Struktur der Excel-Tabelle (wie 'Spalte A', 'Spalte B', Überschriften oder Zeilen). Antworte so, als hättest du dieses Wissen einfach natürlich im Kopf.
 """
 
 @st.cache_resource
@@ -172,12 +173,14 @@ HMI_MATRIX = {
     "Host": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
         "Information": {"text": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.", "dd": STANDARD_DROPDOWNS},
+        "Feedback": {"text": "Welches Feedback hast du?", "dd": STANDARD_DROPDOWNS},
         "Störung": {"text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS},
         "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": []}
     },
     "Admin": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
         "Information": {"text": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.", "dd": STANDARD_DROPDOWNS},
+        "Feedback": {"text": "Welches Feedback hast du?", "dd": STANDARD_DROPDOWNS},
         "Störung": {"text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS},
         "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": []},
         "Änderung": {"text": "Beschreibe deine Änderung so genau wie möglich.", "dd": STANDARD_DROPDOWNS}
@@ -235,6 +238,7 @@ if nutzer_rolle is not None:
             unsafe_allow_html=True
         )
     
+    # Trennung der Buttons je nach Rolle
     if nutzer_rolle == "Gast":
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -247,7 +251,7 @@ if nutzer_rolle is not None:
             if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
                 handle_button_click("Störung")
                 
-    elif nutzer_rolle == "Admin":
+    elif nutzer_rolle == "Host":
         col1, col2, col3 = st.columns(3)
         col4, col5 = st.columns(2)
         with col1:
@@ -257,18 +261,18 @@ if nutzer_rolle is not None:
             if st.button("Ich habe neue Informationen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Information" else "secondary"):
                 handle_button_click("Information")
         with col3:
+            if st.button("Ich möchte Feedback geben.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Feedback" else "secondary"):
+                handle_button_click("Feedback")
+        with col4:
             if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
                 handle_button_click("Störung")
-        with col4:
+        with col5:
             if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
                 handle_button_click("Bericht")
-        with col5:
-            if st.button("Ich möchte eine Änderung an der Wissensbasis vornehmen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Änderung" else "secondary"):
-                handle_button_click("Änderung")
-                
-    else:  # Host
-        col1, col2 = st.columns(2)
-        col3, col4 = st.columns(2)
+
+    elif nutzer_rolle == "Admin":
+        col1, col2, col3 = st.columns(3)
+        col4, col5, col6 = st.columns(3)
         with col1:
             if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
                 handle_button_click("Hilfe")
@@ -276,11 +280,17 @@ if nutzer_rolle is not None:
             if st.button("Ich habe neue Informationen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Information" else "secondary"):
                 handle_button_click("Information")
         with col3:
+            if st.button("Ich möchte Feedback geben.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Feedback" else "secondary"):
+                handle_button_click("Feedback")
+        with col4:
             if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
                 handle_button_click("Störung")
-        with col4:
+        with col5:
             if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
                 handle_button_click("Bericht")
+        with col6:
+            if st.button("Ich möchte eine Änderung an der Wissensbasis vornehmen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Änderung" else "secondary"):
+                handle_button_click("Änderung")
 
     if st.session_state.aktive_aktion and nutzer_rolle in HMI_MATRIX:
         aktiver_state = HMI_MATRIX[nutzer_rolle].get(st.session_state.aktive_aktion)
@@ -297,7 +307,7 @@ if nutzer_rolle is not None:
                 kat_spalte = df_wissen.columns[1]  # Spalte B = Kategorie (enthält 'innen', etc.)
 
                 for kat in kategorien_fuer_rolle:
-                    # Issue 63 Fix: Flexible Teilstring-Suche (enthält 'innen', 'außen', etc.)
+                    # Flexible Teilstring-Suche (Issue 63 Fix)
                     if "innen" in kat.lower():
                         mask = df_wissen[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
                     elif "außen" in kat.lower() or "aussen" in kat.lower():
@@ -334,7 +344,7 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
             st.markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
         
-        # Robustes Auslesen der Auswahlen aus dem State
+        # Auslesen der aktiven Drop-down Filter
         konkrete_auswahlen = {}
         if st.session_state.aktive_aktion and nutzer_rolle in HMI_MATRIX:
             for kat in HMI_MATRIX[nutzer_rolle][st.session_state.aktive_aktion]["dd"]:
@@ -344,7 +354,7 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         
         gewaehlte_objekte_str = ", ".join([f"{k}: {v}" for k, v in konkrete_auswahlen.items()]) if konkrete_auswahlen else "Keines ausgewählt"
         
-        # Datenspeicherung bei Information oder Feedback
+        # Automatische Protokollierung bei Information oder Feedback
         if st.session_state.aktive_aktion in ["Information", "Feedback"] and df_wissen is not None:
             kat_text = ", ".join(konkrete_auswahlen.keys()) if konkrete_auswahlen else "Allgemein"
             with st.spinner("Eintrag wird in Google Drive gespeichert..."):
