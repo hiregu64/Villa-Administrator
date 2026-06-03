@@ -45,11 +45,10 @@ with st.spinner("Verbindung zur Google Drive Wissensbasis wird hergestellt..."):
     df_wissen, drive_service = load_data_from_drive()
 
 # ==========================================
-# 2. LIVE-UPDATE IN GOOGLE DRIVE SCHREIBEN
+# 2. LIVE-UPDATE (INFORMATION & FEEDBACK: Zeile anhängen)
 # ==========================================
 def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"):
     try:
-        # Spalte A = Bezeichnung/Eintrag, Spalte B = Kategorie laut Vorgabe
         neue_zeile = {
             df.columns[0]: f"Update: {neuer_text}", 
             df.columns[1]: kategorie,
@@ -70,6 +69,60 @@ def append_info_to_drive(df, neuer_text, nutzername, kategorie="Nicht definiert"
         return True
     except Exception as e:
         st.error(f"Fehler beim Schreiben in Google Drive: {e}")
+        return False
+
+# ==========================================
+# 2b. STÖRUNGSLOGIK (Spalten J & K aktualisieren)
+# ==========================================
+def update_stoerung_in_drive(df, stoerung_text, nutzername, objekt_name=None):
+    try:
+        # Absicherung: Falls die Excel weniger als 11 Spalten eingelesen hat (da leer), auffüllen bis K (Index 10)
+        while len(df.columns) < 11:
+            df[f"Spalte_{len(df.columns)+1}"] = ""
+            
+        row_idx = None
+        
+        # 1. Versuchen, das konkrete ausgewählte Objekt in Spalte A zu finden
+        if objekt_name:
+            match = df[df.iloc[:, 0].astype(str).str.strip().str.lower() == str(objekt_name).strip().lower()]
+            if not match.empty:
+                row_idx = match.index[0]
+                
+        # 2. Wenn kein Objekt gewählt wurde oder das Thema unzuordenbar ist -> Zeile "Nicht gefunden" nutzen
+        if row_idx is None:
+            match_nf = df[df.iloc[:, 0].astype(str).str.strip().str.lower() == "nicht gefunden"]
+            if not match_nf.empty:
+                row_idx = match_nf.index[0]
+            else:
+                # Fallback, falls die Zeile "Nicht gefunden" physisch in Excel fehlt, legen wir sie an
+                neue_zeile = {df.columns[0]: "Nicht gefunden"}
+                df = pd.concat([df, pd.DataFrame([neue_zeile])], ignore_index=True)
+                row_idx = len(df) - 1
+
+        # Daten für Spalte J (Index 9) und Spalte K (Index 10) vorbereiten & Historie wahren
+        zeitstempel = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
+        
+        alt_j = str(df.iloc[row_idx, 9]) if pd.notna(df.iloc[row_idx, 9]) else ""
+        alt_k = str(df.iloc[row_idx, 10]) if pd.notna(df.iloc[row_idx, 10]) else ""
+        
+        neu_j = f"{alt_j}\n- {stoerung_text}".strip() if alt_j else f"- {stoerung_text}"
+        neu_k = f"{alt_k}\n- {zeitstempel} ({nutzername})".strip() if alt_k else f"- {zeitstempel} ({nutzername})"
+        
+        df.iloc[row_idx, 9] = neu_j
+        df.iloc[row_idx, 10] = neu_k
+        
+        # Datei zurückschreiben
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False)
+        output.seek(0)
+        
+        media = MediaIoBaseUpload(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', resumable=True)
+        drive_service.files().update(fileId=FILE_ID, media_body=media).execute()
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"Fehler beim Loggen der Störung in Google Drive: {e}")
         return False
 
 # ==========================================
@@ -238,7 +291,6 @@ if nutzer_rolle is not None:
             unsafe_allow_html=True
         )
     
-    # Trennung der Buttons je nach Rolle
     if nutzer_rolle == "Gast":
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -303,11 +355,10 @@ if nutzer_rolle is not None:
             kategorien_fuer_rolle = aktiver_state["dd"]
             
             if df_wissen is not None and not df_wissen.empty:
-                bez_spalte = df_wissen.columns[0]  # Spalte A = Bezeichnung
-                kat_spalte = df_wissen.columns[1]  # Spalte B = Kategorie (enthält 'innen', etc.)
+                bez_spalte = df_wissen.columns[0]  
+                kat_spalte = df_wissen.columns[1]  
 
                 for kat in kategorien_fuer_rolle:
-                    # Flexible Teilstring-Suche (Issue 63 Fix)
                     if "innen" in kat.lower():
                         mask = df_wissen[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
                     elif "außen" in kat.lower() or "aussen" in kat.lower():
@@ -353,12 +404,20 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
                     konkrete_auswahlen[kat] = st.session_state[key]
         
         gewaehlte_objekte_str = ", ".join([f"{k}: {v}" for k, v in konkrete_auswahlen.items()]) if konkrete_auswahlen else "Keines ausgewählt"
+        gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if konkrete_auswahlen else None
         
-        # Automatische Protokollierung bei Information oder Feedback
+        # 1. LOGIK FÜR INFORMATION / FEEDBACK (Zeile anhängen)
         if st.session_state.aktive_aktion in ["Information", "Feedback"] and df_wissen is not None:
             kat_text = ", ".join(konkrete_auswahlen.keys()) if konkrete_auswahlen else "Allgemein"
             with st.spinner("Eintrag wird in Google Drive gespeichert..."):
                 append_info_to_drive(df_wissen, prompt, nutzer_rolle, kat_text)
+                st.cache_data.clear()
+                df_wissen, _ = load_data_from_drive()
+                
+        # 2. LOGIK FÜR STÖRUNGEN (Spalte J & K aktualisieren in Zielzeile oder "Nicht gefunden")
+        elif st.session_state.aktive_aktion == "Störung" and df_wissen is not None:
+            with st.spinner("Störung wird in der Wissensbasis (Spalten J/K) protokolliert..."):
+                update_stoerung_in_drive(df_wissen, prompt, nutzer_rolle, gewaehltes_objekt)
                 st.cache_data.clear()
                 df_wissen, _ = load_data_from_drive()
 
