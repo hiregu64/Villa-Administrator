@@ -281,11 +281,13 @@ def handle_button_click(aktions_name):
     st.session_state.messages = []  
     st.rerun()
 
+# HIER FIX: key="haupt_nutzer_rolle" stabilisiert mobile Browser
 nutzer_rolle = st.selectbox(
     label="Hidden_Rollen_Label",
     options=["Gast", "Host", "Admin"],
     index=None,
     placeholder="Wer bist du?",
+    key="haupt_nutzer_rolle",  
     label_visibility="collapsed"
 )
 
@@ -398,30 +400,30 @@ if nutzer_rolle is not None:
                     else:
                         mask = df_wissen[kat_spalte].astype(str).str.contains(kat, case=False, na=False)
                     
-                    # 2. Schritt: Präzise Rollen-Filterung über das "X" in den jeweiligen Spalten
+                    # ==================================================================
+                    # HIER FIX: Präzise Rollen-Filterung (Host & Admin sehen alles!)
+                    # ==================================================================
                     if nutzer_rolle == "Gast" and len(df_wissen.columns) > 2:
+                        # Der Gast sieht AUSSCHLIESSLICH Zeilen mit einem "X" in Spalte C
                         mask = mask & (df_wissen.iloc[:, 2].astype(str).str.strip().str.upper() == "X")
-                    elif nutzer_rolle == "Host" and len(df_wissen.columns) > 3:
-                        mask = mask & (df_wissen.iloc[:, 3].astype(str).str.strip().str.upper() == "X")
-                    elif nutzer_rolle == "Admin" and len(df_wissen.columns) > 4:
-                        mask = mask & (df_wissen.iloc[:, 4].astype(str).str.strip().str.upper() == "X")
+                    
+                    # Für 'Host' und 'Admin' wird KEIN zusätzlicher X-Filter angewendet.
+                    # Sie sehen somit alle Einträge der gewählten Kategorie uneingeschränkt.
+                    # ==================================================================
                     
                     # Liste der Optionen auslesen und bereinigen
                     verfuegbare_bezeichnungen = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
                     verfuegbare_bezeichnungen = [str(b).strip() for b in verfuegbare_bezeichnungen]
                     
-                    # ==================================================================
-                    # KORREKTUR FÜR ISSUE 66: "Nicht gefunden" an das Ende der Liste setzen
-                    # ==================================================================
+                    # "Nicht gefunden" aus der Liste nehmen, um es später ans Ende zu stellen
                     if "Nicht gefunden" in verfuegbare_bezeichnungen:
                         verfuegbare_bezeichnungen.remove("Nicht gefunden")
                     
                     # Restliche Items alphabetisch sortieren
                     verfuegbare_bezeichnungen = sorted(verfuegbare_bezeichnungen)
                     
-                    # Jetzt "Nicht gefunden" ganz am Ende anhängen
+                    # Jetzt "Nicht gefunden" ganz am Ende anhängen (Issue 66)
                     verfuegbare_bezeichnungen.append("Nicht gefunden")
-                    # ==================================================================
                     
                     st.selectbox(
                         label=f"Hidden_Label_{kat}", 
