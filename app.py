@@ -9,6 +9,7 @@ import io
 import datetime
 import json
 import openpyxl
+from openpyxl.styles import Font  # Import für die farbliche Kennzeichnung
 
 # Google File ID der Excel-Tabelle
 FILE_ID = '1FzhWZuO6aRZkdRuQBzaojhkq7bQDyprl'
@@ -98,8 +99,13 @@ def schreibe_input(service, text, nutzername, objekt_name, aktions_typ):
         alt_text = str(ws.cell(row=row_idx, column=t_col).value) if ws.cell(row=row_idx, column=t_col).value is not None else ""
         alt_status = str(ws.cell(row=row_idx, column=status_col).value) if ws.cell(row=row_idx, column=status_col).value is not None else ""
         
-        ws.cell(row=row_idx, column=t_col, value=f"{alt_text}\n- {text}".strip() if alt_text else f"- {text}")
-        ws.cell(row=row_idx, column=status_col, value=f"{alt_status}\n- {zeitstempel} ({nutzername}): {status_val}".strip() if alt_status else f"- {zeitstempel} ({nutzername}): {status_val}")
+        # Text & Status schreiben
+        cell_text = ws.cell(row=row_idx, column=t_col, value=f"{alt_text}\n- {text}".strip() if alt_text else f"- {text}")
+        cell_status = ws.cell(row=row_idx, column=status_col, value=f"{alt_status}\n- {zeitstempel} ({nutzername}): {status_val}".strip() if alt_status else f"- {zeitstempel} ({nutzername}): {status_val}")
+        
+        # Blau einfärben (Hex-Code: 0000FF für reines Blau)
+        cell_text.font = Font(color="0000FF")
+        cell_status.font = Font(color="0000FF")
         
         output = io.BytesIO()
         wb.save(output)
@@ -146,7 +152,12 @@ def aktualisiere_stammdaten(service, text, nutzername, objekt_name, zielspalte_n
         col_idx = SPALTEN_MAP.get(zielspalte_name, 8)  # Fallback auf Details Nutzung (H)
         
         alt_val = str(ws.cell(row=row_idx, column=col_idx).value) if ws.cell(row=row_idx, column=col_idx).value is not None else ""
-        ws.cell(row=row_idx, column=col_idx, value=f"{alt_val}\n{text}".strip() if alt_val else text)
+        
+        # Wert aktualisieren
+        cell_info = ws.cell(row=row_idx, column=col_idx, value=f"{alt_val}\n{text}".strip() if alt_val else text)
+        
+        # Blau einfärben
+        cell_info.font = Font(color="0000FF")
         
         output = io.BytesIO()
         wb.save(output)
@@ -176,9 +187,15 @@ def ändere_struktur(service, text, nutzername, kategorie_text):
         clean_name = text.replace("Füge", "").replace("hinzu", "").replace("Objekt", "").strip()
         if len(clean_name) > 60: clean_name = clean_name[:57] + "..."
         
-        ws.cell(row=new_row, column=1, value=clean_name)
-        ws.cell(row=new_row, column=2, value=kategorie_text if kategorie_text else "Ausstattung innen")
-        ws.cell(row=new_row, column=3, value="X")  # Standardmäßig für Gäste aktivierbar
+        # Neue Zeile befüllen
+        cell_name = ws.cell(row=new_row, column=1, value=clean_name)
+        cell_kat = ws.cell(row=new_row, column=2, value=kategorie_text if kategorie_text else "Ausstattung innen")
+        cell_gast = ws.cell(row=new_row, column=3, value="X")  # Standardmäßig für Gäste aktivierbar
+        
+        # Die komplette neue Zeile (A, B, C) blau einfärben
+        cell_name.font = Font(color="0000FF")
+        cell_kat.font = Font(color="0000FF")
+        cell_gast.font = Font(color="0000FF")
         
         output = io.BytesIO()
         wb.save(output)
@@ -242,7 +259,7 @@ def ai_waehle_stammdaten_spalte(user_text):
         - Kontakt
         - Kosten
         
-        Antworte NUR mit dem exakten Namen der Spalte aus dieser Liste, ohne weiteren Text. Wenn unklar, antworte mit: Details Nutzung
+        Antworte NUR with dem exakten Namen der Spalte aus dieser Liste, ohne weiteren Text. Wenn unklar, antworte mit: Details Nutzung
         """
         response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         return response.text.strip().replace('"', '').replace("'", "")
@@ -377,7 +394,7 @@ if nutzer_rolle is not None:
         with col4:
             if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"): handle_button_click("Störung")
         with col5:
-            if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"): handle_button_click("Bericht")
+            if st.button("Ich benötigt einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"): handle_button_click("Bericht")
         with col6:
             if nutzer_rolle == "Admin":
                 if st.button("Ich möchte eine Änderung vornehmen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Änderung" else "secondary"): handle_button_click("Änderung")
