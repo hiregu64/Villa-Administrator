@@ -354,7 +354,7 @@ if nutzer_rolle is not None:
             if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
                 handle_button_click("Störung")
         with col5:
-            if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
+            if st.button("Ich benötigt einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
                 handle_button_click("Bericht")
 
     elif nutzer_rolle == "Admin":
@@ -451,7 +451,7 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         
         # 1. LOGIK FÜR INFORMATION / FEEDBACK / ANPASSUNG
         if st.session_state.aktive_aktion in ["Information", "Feedback", "Anpassung"] and drive_service is not None:
-            kat_text = ", ".join(konkrete_auswahlen.keys()) if intrauterine_auswahlen else "Allgemein"
+            kat_text = ", ".join(konkrete_auswahlen.keys()) if konkrete_auswahlen else "Allgemein"
             with st.spinner("Eintrag wird formatsicher in Google Drive gespeichert..."):
                 append_info_to_drive(drive_service, prompt, nutzer_rolle, kat_text)
                 st.cache_data.clear()
@@ -465,7 +465,7 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
                 df_wissen, _ = load_data_from_drive()
 
         # ==========================================
-        # NEU: INTELLIGENTER CONTEXT-FILTER (TOKEN-SPARGANG gegen 429-Fehler)
+        # INTELLIGENTER CONTEXT-FILTER (TOKEN-SPARGANG gegen 429-Fehler)
         # ==========================================
         if df_wissen is not None and not df_wissen.empty:
             df_gefiltert = df_wissen.copy()
