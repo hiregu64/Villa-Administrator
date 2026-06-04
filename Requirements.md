@@ -52,3 +52,7 @@ Jeder Use Case durchläuft zwingend die exakte, vertikale Reihenfolge der Darste
 
 ### C. Der Struktur-Workflow (Änderung)
 * **Anpassung (Nur Admin):** Erlaubt das Hinzufügen komplett neuer Zeilen (Objekte) in die Excel-Tabelle. Das Objekt wird in Spalte A eingetragen, die gewählte Kategorie in Spalte B, und Spalte C erhält standardmäßig ein `X`, damit das neue Objekt sofort für Gäste sichtbar ist.
+
+### D. Visuelle Revisions-Queue (Farbliche Kennzeichnung)
+* **Qualitätssicherung:** Um neu eingegangene Daten für den Administrator sofort sichtbar zu machen, werden alle automatischen Schreibprozesse (neuer Text in Störung/Feedback, neue Stammdaten-Infos sowie komplett neu angelegte Struktur-Zeilen) in **blauer Schriftfarbe (Hex: 0000FF)** in die Excel-Datei geschrieben.
+* **Review-Prozess:** Der Administrator nutzt diese farbliche Kennzeichnung als „Posteingang“. Nach redaktioneller Prüfung, Korrektur oder Freigabe der Zelle im Excel-Sheet setzt der Administrator die Schriftfarbe manuell wieder auf die Standardfarbe (Schwarz) zurück, um die Übersichtlichkeit zu wahren.
