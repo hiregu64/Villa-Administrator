@@ -173,9 +173,6 @@ def get_ki_client():
 
 client = get_ki_client()
 
-# ==========================================
-# HIER NEU: VERFEINERTES DEUTSCHES SICHERHEITSNETZ
-# ==========================================
 def generate_ki_response(prompt_text):
     if client is None:
         return "🛑 KI-Dienst nicht konfiguriert: Der API-Key fehlt komplett in den Streamlit Secrets."
@@ -203,14 +200,14 @@ def generate_ki_response(prompt_text):
             except Exception as e_fallback:
                 fallback_msg = str(e_fallback)
                 if "429" in fallback_msg or "RESOURCE_EXHAUSTED" in fallback_msg:
-                    return "🛑 Das Limit für kostenlose Anfragen (Minuten- oder Tages-Quota) bei Google ist aktuell aufgebraucht. Bitte warte ein paar Minuten oder versuche es morgen wieder."
-                return "🌐 Die Google-KI-Server sind aktuell überlastet oder antworten nicht. Bitte warte einen kurzen Moment und sende deine Nachricht noch einmal."
+                    return f"🛑 Das Limit für kostenlose Anfragen (Quota) ist aufgebraucht.\n\n*(Debug-Info: {fallback_msg})*"
+                return f"🌐 Die Google-KI-Server sind aktuell überlastet oder antworten nicht.\n\n*(Debug-Details – Primär: {error_msg} | Fallback: {fallback_msg})*"
         
         # Abfangen von Rechte- oder Key-Problemen
         elif "403" in error_msg or "API_KEY_INVALID" in error_msg or "PERMISSION_DENIED" in error_msg:
-            return "🔑 Zugriff verweigert: Der Google API-Key ist ungültig, abgelaufen oder hat keine ausreichenden Rechte. Bitte überprüfe die Secrets in den Streamlit-Einstellungen."
+            return f"🔑 Zugriff verweigert: Der Google API-Key ist ungültig.\n\n*(Debug-Info: {error_msg})*"
         
-        return f"⚠️ Fehler bei der KI-Verarbeitung: {e}"
+        return f"⚠️ Fehler bei der KI-Verarbeitung.\n\n*(Debug-Info: {error_msg})*"
 
 # ==========================================
 # 4. BENUTZEROBERFLÄCHE (HMI) & STYLING
@@ -250,7 +247,7 @@ st.title("☀️ Villa Avatar")
 st.markdown("Hallo! Ich bin Villa Avatar, dein digitaler **'Helfer'**! Wähle unten die Rolle aus, um zu beginnen.")
 
 # ==========================================
-# 5. DIE EXAKTE HMI-ZUSTANDSMATRIX (REPARIERT)
+# 5. DIE EXAKTE HMI-ZUSTANDSMATRIX
 # ==========================================
 STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
 
@@ -357,7 +354,7 @@ if nutzer_rolle is not None:
             if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
                 handle_button_click("Störung")
         with col5:
-            if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
+            if st.button("Ich benötigt einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
                 handle_button_click("Bericht")
 
     elif nutzer_rolle == "Admin":
