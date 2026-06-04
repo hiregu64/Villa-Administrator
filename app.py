@@ -190,9 +190,9 @@ def generate_ki_response(prompt_text):
         # Abfangen von Quota- oder Serverfehlern beim Primärmodell
         if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "503" in error_msg or "UNAVAILABLE" in error_msg or "504" in error_msg or "TIMEOUT" in error_msg.upper():
             try:
-                # Fallback auf Version 1.5
+                # Fallback auf Version 2.0-flash (da 1.5 im neuen SDK oft einen 404 wirft)
                 response = client.models.generate_content(
-                    model="gemini-1.5-flash",
+                    model="gemini-2.0-flash",
                     contents=prompt_text,
                     config=types.GenerateContentConfig(system_instruction=VILLA_PROMPT)
                 )
@@ -200,14 +200,14 @@ def generate_ki_response(prompt_text):
             except Exception as e_fallback:
                 fallback_msg = str(e_fallback)
                 if "429" in fallback_msg or "RESOURCE_EXHAUSTED" in fallback_msg:
-                    return f"🛑 Das Limit für kostenlose Anfragen (Quota) ist aufgebraucht.\n\n*(Debug-Info: {fallback_msg})*"
-                return f"🌐 Die Google-KI-Server sind aktuell überlastet oder antworten nicht.\n\n*(Debug-Details – Primär: {error_msg} | Fallback: {fallback_msg})*"
+                    return "🛑 Das Limit für kostenlose Anfragen (Quota) bei Google ist aktuell aufgebraucht. Bitte warte eine Minute oder versuche es gleich noch einmal."
+                return "🌐 Die Google-KI-Server sind aktuell überlastet oder antworten nicht. Bitte warte einen kurzen Moment und sende deine Nachricht noch einmal."
         
         # Abfangen von Rechte- oder Key-Problemen
         elif "403" in error_msg or "API_KEY_INVALID" in error_msg or "PERMISSION_DENIED" in error_msg:
-            return f"🔑 Zugriff verweigert: Der Google API-Key ist ungültig.\n\n*(Debug-Info: {error_msg})*"
+            return "🔑 Zugriff verweigert: Der Google API-Key ist ungültig, abgelaufen oder hat keine ausreichenden Rechte. Bitte überprüfe die Secrets in den Streamlit-Einstellungen."
         
-        return f"⚠️ Fehler bei der KI-Verarbeitung.\n\n*(Debug-Info: {error_msg})*"
+        return f"⚠️ Fehler bei der KI-Verarbeitung: {e}"
 
 # ==========================================
 # 4. BENUTZEROBERFLÄCHE (HMI) & STYLING
@@ -354,7 +354,7 @@ if nutzer_rolle is not None:
             if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
                 handle_button_click("Störung")
         with col5:
-            if st.button("Ich benötigt einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
+            if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
                 handle_button_click("Bericht")
 
     elif nutzer_rolle == "Admin":
@@ -451,7 +451,7 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         
         # 1. LOGIK FÜR INFORMATION / FEEDBACK / ANPASSUNG
         if st.session_state.aktive_aktion in ["Information", "Feedback", "Anpassung"] and drive_service is not None:
-            kat_text = ", ".join(konkrete_auswahlen.keys()) if konkrete_auswahlen else "Allgemein"
+            kat_text = ", ".join(konkrete_auswahlen.keys()) if intrauterine_auswahlen else "Allgemein"
             with st.spinner("Eintrag wird formatsicher in Google Drive gespeichert..."):
                 append_info_to_drive(drive_service, prompt, nutzer_rolle, kat_text)
                 st.cache_data.clear()
@@ -464,7 +464,37 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
                 st.cache_data.clear()
                 df_wissen, _ = load_data_from_drive()
 
-        kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_wissen.to_string(index=False)}" if df_wissen is not None else ""
+        # ==========================================
+        # NEU: INTELLIGENTER CONTEXT-FILTER (TOKEN-SPARGANG gegen 429-Fehler)
+        # ==========================================
+        if df_wissen is not None and not df_wissen.empty:
+            df_gefiltert = df_wissen.copy()
+            
+            # Prio 1: Nach dem konkreten Objekt filtern (wenn es ausgewählt wurde und nicht "Nicht gefunden" ist)
+            if gewaehltes_objekt and gewaehltes_objekt != "Nicht gefunden":
+                df_gefiltert = df_gefiltert[df_gefiltert.iloc[:, 0].astype(str).str.strip().str.lower() == str(gewaehltes_objekt).strip().lower()]
+            
+            # Prio 2: Falls "Nicht gefunden" oder nur Kategorien gewählt sind, filtern wir nach der Kategorie
+            elif konkrete_auswahlen:
+                mask = pd.Series(False, index=df_gefiltert.index)
+                for kat in konkrete_auswahlen.keys():
+                    if "innen" in kat.lower():
+                        mask = mask | df_gefiltert.iloc[:, 1].astype(str).str.contains("innen", case=False, na=False)
+                    elif "außen" in kat.lower() or "aussen" in kat.lower():
+                        mask = mask | df_gefiltert.iloc[:, 1].astype(str).str.contains("außen|aussen", case=False, na=False)
+                    elif "nähe" in kat.lower() or "naehe" in kat.lower():
+                        mask = mask | df_gefiltert.iloc[:, 1].astype(str).str.contains("nähe|naehe|In der Nähe", case=False, na=False)
+                    else:
+                        mask = mask | df_gefiltert.iloc[:, 1].astype(str).str.contains(kat, case=False, na=False)
+                df_gefiltert = df_gefiltert[mask]
+                
+            # Fallback: Falls der Filter komplett leer ist, nehmen wir die ganze Tabelle
+            if df_gefiltert.empty:
+                df_gefiltert = df_wissen
+                
+            kontext = f"\n\nAktuelle Daten aus der Wissensbasis:\n{df_gefiltert.to_string(index=False)}"
+        else:
+            kontext = ""
         
         with st.chat_message("assistant"):
             with st.spinner("Villa Avatar überlegt..."):
