@@ -7,7 +7,8 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 import pandas as pd
 import io
 import datetime
-import openpyxl
+import json
+import openpyxl  # Sichert die Formatierung beim Schreiben
 
 # Google File ID der Excel-Tabelle
 FILE_ID = '1FzhWZuO6aRZkdRuQBzaojhkq7bQDyprl'
@@ -45,7 +46,7 @@ with st.spinner("Verbindung zur Google Drive Wissensbasis wird hergestellt..."):
     df_wissen, drive_service = load_data_from_drive()
 
 # ==========================================
-# 2. DATA-LOGGING (Änderungen & Störungen)
+# 2. DESIGN-SICHERES UPDATE (Reihe anhängen)
 # ==========================================
 def append_info_to_drive(service, neuer_text, nutzername, kategorie="Nicht definiert"):
     try:
@@ -91,6 +92,9 @@ def append_info_to_drive(service, neuer_text, nutzername, kategorie="Nicht defin
         st.error(f"Fehler beim Schreiben in Google Drive: {e}")
         return False
 
+# ==========================================
+# 2b. DESIGN-SICHERES STÖRUNGSLOG (Spalten J & K)
+# ==========================================
 def update_stoerung_in_drive(service, stoerung_text, nutzername, objekt_name=None):
     try:
         request = service.files().get_media(fileId=FILE_ID)
@@ -105,6 +109,7 @@ def update_stoerung_in_drive(service, stoerung_text, nutzername, objekt_name=Non
         ws = wb.active
         
         row_idx = None
+        
         if objekt_name:
             for r in range(2, ws.max_row + 1):
                 val = ws.cell(row=r, column=1).value
@@ -147,7 +152,7 @@ def update_stoerung_in_drive(service, stoerung_text, nutzername, objekt_name=Non
         return False
 
 # ==========================================
-# 3. KI-GEHIRN & SYSTEM PROMPT
+# 3. KI-GEHIRN (SYSTEM-PROMPT)
 # ==========================================
 VILLA_PROMPT = """
 Du bist „Villa Avatar“, der digitale Helfer für die Gäste (Gast), Gastgeber (Host) und Administratoren (Admin) der Villa. Deine Aufgabe ist es, den Aufenthalt, Betrieb und Erhalt des Hauses so einfach und angenehm wie möglich zu gestalten.
@@ -170,7 +175,7 @@ client = get_ki_client()
 
 def generate_ki_response(prompt_text):
     if client is None:
-        return "🛑 KI-Dienst nicht konfiguriert: Der API-Key fehlt komplett in den Streamlit Secrets."
+        return "KI-Dienst nicht konfiguriert (API Key fehlt in den Secrets)."
     
     try:
         response = client.models.generate_content(
@@ -181,29 +186,20 @@ def generate_ki_response(prompt_text):
         return response.text
     except Exception as e:
         error_msg = str(e)
+        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "503" in error_msg or "UNAVAILABLE" in error_msg:
+            try:
+                response = client.models.generate_content(
+                    model="gemini-1.5-flash",
+                    contents=prompt_text,
+                    config=types.GenerateContentConfig(system_instruction=VILLA_PROMPT)
+                )
+                return response.text
+            except Exception as e_fallback:
+                if "429" in str(e_fallback) or "RESOURCE_EXHAUSTED" in str(e_fallback):
+                    return "🛑 Das tägliche kostenlose Abfrage-Limit der Villa Avatar ist leider für heute aufgebraucht. Bitte versuche es morgen wieder!"
+                return "⏳ Die KI-Server sind aktuell stark ausgelastet. Bitte warte einen kurzen Moment und sende deine Nachricht noch einmal."
         
-        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-            return "🛑 Das Limit für kostenlose Anfragen (Minuten- oder Tages-Quota) bei Google ist aktuell aufgebraucht. Bitte warte ein paar Minuten oder versuche es morgen wieder."
-        elif "403" in error_msg or "API_KEY_INVALID" in error_msg or "PERMISSION_DENIED" in error_msg:
-            return "🔑 Zugriff verweigert: Der Google API-Key ist ungültig, abgelaufen oder hat keine Rechte. Bitte überprüfe die Secrets in den Streamlit-Einstellungen."
-        elif "503" in error_msg or "UNAVAILABLE" in error_msg or "504" in error_msg or "TIMEOUT" in error_msg.upper():
-            return "🌐 Der Google-KI-Server antwortet aktuell nicht oder ist überlastet. Bitte warte einen kurzen Moment und sende deine Nachricht noch einmal."
-        
-        # Fallback auf Version 1.5
-        try:
-            response = client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=prompt_text,
-                config=types.GenerateContentConfig(system_instruction=VILLA_PROMPT)
-            )
-            return response.text
-        except Exception as fallback_e:
-            fallback_msg = str(fallback_e)
-            if "429" in fallback_msg or "RESOURCE_EXHAUSTED" in fallback_msg:
-                return "🛑 Auch das Ausweichmodell meldet: Das Limit für Anfragen (Quota) ist für heute aufgebraucht."
-            elif "403" in fallback_msg or "API_KEY_INVALID" in fallback_msg:
-                return "🔑 Auch beim Ausweichmodell wird der Zugriff verweigert. Der API-Key ist fehlerhaft."
-            return f"⚠️ Die Verbindung ist mit folgendem Fehler fehlgeschlagen: {fallback_msg}"
+        return f"Fehler bei der KI-Verarbeitung: {e}"
 
 # ==========================================
 # 4. BENUTZEROBERFLÄCHE (HMI) & STYLING
@@ -240,29 +236,32 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("☀️ Villa Avatar")
-st.markdown("Hallo! Ich bin Villa Avatar, dein digitaler **'Helfer'**! Wähle unten deine Rolle aus, um zu beginnen.")
+st.markdown("Hallo! Ich bin Villa Avatar, dein digitaler **'Helfer'**! Wähle unten die Rolle aus, um zu beginnen.")
 
 # ==========================================
-# 5. DIE AS-BUILT HMI-ZUSTANDSMATRIX (REPARIERT)
+# 5. DIE EXAKTE HMI-ZUSTANDSMATRIX
 # ==========================================
 STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
 
 HMI_MATRIX = {
     "Gast": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
-        "Störung": {"text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS},
-        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": []}
+        "Feedback": {"text": "Welches Feedback hast du?", "dd": STANDARD_DROPDOWNS},
+        "Störung": {"text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS}
     },
     "Host": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
-        "Störung": {"text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS},
         "Information": {"text": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.", "dd": STANDARD_DROPDOWNS},
-        "Änderung": {"text": "Beschreibe deine Änderung so genau wie möglich.", "dd": STANDARD_DROPDOWNS}
+        "Feedback": {"text": "Welches Feedback hast du?", "dd": STANDARD_DROPDOWNS},
+        "Störung": {"text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS},
+        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": []}
     },
     "Admin": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
-        "Störung": {"text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS},
         "Information": {"text": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.", "dd": STANDARD_DROPDOWNS},
+        "Feedback": {"text": "Welches Feedback hast du?", "dd": STANDARD_DROPDOWNS},
+        "Störung": {"text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS},
+        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": []},
         "Änderung": {"text": "Beschreibe deine Änderung so genau wie möglich.", "dd": STANDARD_DROPDOWNS}
     }
 }
@@ -282,7 +281,7 @@ def handle_button_click(aktions_name):
     st.session_state.messages = []  
     st.rerun()
 
-# Rollenauswahl
+# HIER FIX: key="haupt_nutzer_rolle" stabilisiert mobile Browser
 nutzer_rolle = st.selectbox(
     label="Hidden_Rollen_Label",
     options=["Gast", "Host", "Admin"],
@@ -307,36 +306,69 @@ if nutzer_rolle is not None:
     with st.container():
         st.markdown(
             "<div style='display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 10px;'>"
-            "<span style='font-weight: bold; font-size: 1.2rem; font-family: inherit;'>Nutzung der Wissensbasis für:</span>"
+            "<span style='font-weight: bold; font-size: 1.2rem; font-family: inherit;'>Mein Anliegen:</span>"
+            "<div style='width: 32px; height: 32px; background-color: rgb(255, 75, 75); border-radius: 8px; display: flex; align-items: center; justify-content: center;'>"
+            "<svg viewBox='0 0 24 24' width='20' height='20' stroke='white' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'>"
+            "<circle cx='12' cy='12' r='10'></circle>"
+            "<path d='M8 14s1.5 2 4 2 4-2 4-2'></path>"
+            "<line x1='9' y1='9' x2='9.01' y2='9'></line>"
+            "<line x1='15' y1='9' x2='15.01' y2='9'></line>"
+            "</svg>"
+            "</div>"
             "</div>", 
             unsafe_allow_html=True
         )
     
-    # Exakte HMI-Buttonzuordnung laut Blueprint
     if nutzer_rolle == "Gast":
         col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
                 handle_button_click("Hilfe")
         with col2:
+            if st.button("Ich möchte Feedback geben.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Feedback" else "secondary"):
+                handle_button_click("Feedback")
+        with col3:
             if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
                 handle_button_click("Störung")
-        with col3:
-            if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
-                handle_button_click("Bericht")
                 
-    elif nutzer_rolle in ["Host", "Admin"]:
-        col1, col2, col3, col4 = st.columns(4)
+    elif nutzer_rolle == "Host":
+        col1, col2, col3 = st.columns(3)
+        col4, col5 = st.columns(2)
         with col1:
             if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
                 handle_button_click("Hilfe")
         with col2:
-            if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
-                handle_button_click("Störung")
-        with col3:
             if st.button("Ich habe neue Informationen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Information" else "secondary"):
                 handle_button_click("Information")
+        with col3:
+            if st.button("Ich möchte Feedback geben.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Feedback" else "secondary"):
+                handle_button_click("Feedback")
         with col4:
+            if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
+                handle_button_click("Störung")
+        with col5:
+            if st.button("Ich benötigt einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
+                handle_button_click("Bericht")
+
+    elif nutzer_rolle == "Admin":
+        col1, col2, col3 = st.columns(3)
+        col4, col5, col6 = st.columns(3)
+        with col1:
+            if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"):
+                handle_button_click("Hilfe")
+        with col2:
+            if st.button("Ich habe neue Informationen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Information" else "secondary"):
+                handle_button_click("Information")
+        with col3:
+            if st.button("Ich möchte Feedback geben.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Feedback" else "secondary"):
+                handle_button_click("Feedback")
+        with col4:
+            if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"):
+                handle_button_click("Störung")
+        with col5:
+            if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"):
+                handle_button_click("Bericht")
+        with col6:
             if st.button("Ich möchte eine Änderung an der Wissensbasis vornehmen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Änderung" else "secondary"):
                 handle_button_click("Änderung")
 
@@ -350,11 +382,15 @@ if nutzer_rolle is not None:
             
             kategorien_fuer_rolle = aktiver_state["dd"]
             
+            # ==========================================
+            # DYNAMISCHER DROP-DOWN FILTER
+            # ==========================================
             if df_wissen is not None and not df_wissen.empty:
-                bez_spalte = df_wissen.columns[0]
-                kat_spalte = df_wissen.columns[1]
+                bez_spalte = df_wissen.columns[0]  # Spalte A (Bezeichnung)
+                kat_spalte = df_wissen.columns[1]  # Spalte B (Kategorie)
 
                 for kat in kategorien_fuer_rolle:
+                    # 1. Schritt: Nach Kategorie (Spalte B) filtern
                     if "innen" in kat.lower():
                         mask = df_wissen[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
                     elif "außen" in kat.lower() or "aussen" in kat.lower():
@@ -364,16 +400,29 @@ if nutzer_rolle is not None:
                     else:
                         mask = df_wissen[kat_spalte].astype(str).str.contains(kat, case=False, na=False)
                     
+                    # ==================================================================
+                    # HIER FIX: Präzise Rollen-Filterung (Host & Admin sehen alles!)
+                    # ==================================================================
                     if nutzer_rolle == "Gast" and len(df_wissen.columns) > 2:
+                        # Der Gast sieht AUSSCHLIESSLICH Zeilen mit einem "X" in Spalte C
                         mask = mask & (df_wissen.iloc[:, 2].astype(str).str.strip().str.upper() == "X")
                     
+                    # Für 'Host' und 'Admin' wird KEIN zusätzlicher X-Filter angewendet.
+                    # Sie sehen somit alle Einträge der gewählten Kategorie uneingeschränkt.
+                    # ==================================================================
+                    
+                    # Liste der Optionen auslesen und bereinigen
                     verfuegbare_bezeichnungen = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
                     verfuegbare_bezeichnungen = [str(b).strip() for b in verfuegbare_bezeichnungen]
                     
+                    # "Nicht gefunden" aus der Liste nehmen, um es später ans Ende zu stellen
                     if "Nicht gefunden" in verfuegbare_bezeichnungen:
                         verfuegbare_bezeichnungen.remove("Nicht gefunden")
                     
+                    # Restliche Items alphabetisch sortieren
                     verfuegbare_bezeichnungen = sorted(verfuegbare_bezeichnungen)
+                    
+                    # Jetzt "Nicht gefunden" ganz am Ende anhängen (Issue 66)
                     verfuegbare_bezeichnungen.append("Nicht gefunden")
                     
                     st.selectbox(
@@ -390,7 +439,7 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if prompt := st.chat_input("Bitte schreibe hier..."):
+if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
     if nutzer_rolle is None:
         st.warning("Bitte wähle oben zuerst aus, wer du bist!")
     elif not st.session_state.aktive_aktion:
@@ -407,19 +456,20 @@ if prompt := st.chat_input("Bitte schreibe hier..."):
                 if key in st.session_state and st.session_state[key] is not None:
                     konkrete_auswahlen[kat] = st.session_state[key]
         
-        gewaehlte_objekte_str = ", ".join([f"{k}: {v}" for k, v in warme_auswahlen.items()]) if konkrete_auswahlen else "Keines ausgewählt"
+        gewaehlte_objekte_str = ", ".join([f"{k}: {v}" for k, v in konkrete_auswahlen.items()]) if konkrete_auswahlen else "Keines ausgewählt"
         gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if konkrete_auswahlen else None
         
-        # Daten-Logging nach Aktion
-        if st.session_state.aktive_aktion in ["Information", "Änderung"] and drive_service is not None:
+        # 1. LOGIK FÜR INFORMATION / FEEDBACK
+        if st.session_state.aktive_aktion in ["Information", "Feedback"] and drive_service is not None:
             kat_text = ", ".join(konkrete_auswahlen.keys()) if konkrete_auswahlen else "Allgemein"
-            with st.spinner("Eintrag wird in Google Drive gespeichert..."):
+            with st.spinner("Eintrag wird formatsicher in Google Drive gespeichert..."):
                 append_info_to_drive(drive_service, prompt, nutzer_rolle, kat_text)
                 st.cache_data.clear()
                 df_wissen, _ = load_data_from_drive()
                 
+        # 2. LOGIK FÜR STÖRUNGEN
         elif st.session_state.aktive_aktion == "Störung" and drive_service is not None:
-            with st.spinner("Störung wird protokolliert..."):
+            with st.spinner("Störung wird formatsicher in der Wissensbasis protokolliert..."):
                 update_stoerung_in_drive(drive_service, prompt, nutzer_rolle, gewaehltes_objekt)
                 st.cache_data.clear()
                 df_wissen, _ = load_data_from_drive()
