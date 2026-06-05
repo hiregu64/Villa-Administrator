@@ -35,7 +35,7 @@ def load_dynamic_data():
             
         fh.seek(0)
         
-        # Sicherheits-Check für Sheet-Namen (Korrektur Issue 80)
+        # Sicherheits-Check für Sheet-Namen
         xl = pd.ExcelFile(fh)
         if "Wissensbasis" not in xl.sheet_names or "Spalten_Lexikon" not in xl.sheet_names:
             st.error(f"Fehler beim Laden der Excel-Matrix: Worksheet named 'Wissensbasis' oder 'Spalten_Lexikon' nicht gefunden. Vorhanden: {xl.sheet_names}")
@@ -130,7 +130,7 @@ def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, 
         cell_text = ws.cell(row=row_idx, column=t_col, value=neu_text)
         cell_text.font = Font(color="0000FF")
 
-        # Status schreiben
+        # Status schreiben (Falls vorhanden, bei 'Information' z.B. nicht)
         if status_col is not None and status_val is not None:
             alt_status = str(ws.cell(row=row_idx, column=status_col).value) if ws.cell(row=row_idx, column=status_col).value is not None else ""
             neu_status = f"{alt_status}\n- [{zeitstempel} | {nutzername}]: {status_val}".strip() if alt_status else f"- [{zeitstempel} | {nutzername}]: {status_val}"
@@ -151,14 +151,17 @@ def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, 
 # ==========================================
 # 3. KI-GEHIRN & FALLBACK
 # ==========================================
-VILLA_PROMPT = """
+# Exakter Fallback-Satz laut Spezifikation hinterlegt
+FALLBACK_SATZ = "Dazu liegen mir aktuell leider keine Informationen vor."
+
+VILLA_PROMPT = f"""
 Du bist „Villa Avatar“, der digitale Helfer für Gäste (Gast) und Gastgeber (Host) der Villa. 
 
 VERHALTEN:
 - Antworte immer kurz, freundlich und smartphone-optimiert.
 - Passe deine Tonalität der Rolle an.
 - Nutze für Antworten AUSSCHLIESSLICH die übergebenen Tabellendaten und beachte die Regeln im 'Spalten_Lexikon'.
-- Wenn die Daten keine Antwort enthalten: Erfinde nichts! Antworte EXAKT mit diesem Satz: „Dazu liegen mir aktuell leider keine Informationen vor.“
+- Wenn die Daten keine Antwort enthalten: Erfinde nichts! Antworte EXAKT mit diesem Satz: „{FALLBACK_SATZ}“
 - ABSOLUTES VERBOT: Erwähne niemals Tabellenstrukturen, Dateinamen, Zeilen oder Spaltennamen gegenüber dem Nutzer. Verhalte dich wie ein Mensch, der dieses Wissen im Kopf hat.
 """
 
@@ -205,7 +208,7 @@ def generate_ki_response(prompt_text):
         return f"⚠️ Fehler: {e}"
 
 # ==========================================
-# 4. UI & HMI-MATRIX (KORREKTUR ISSUE 81)
+# 4. UI & HMI-MATRIX (STRIKT ABGEGLICHEN - ISSUE 91 & 92)
 # ==========================================
 st.markdown("""
     <style>
@@ -223,17 +226,18 @@ st.markdown("Hallo! Ich bin Villa Avatar. Wähle unten deine Rolle aus, um zu be
 
 STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
 
+# Korrektur Issue 91: Dialogtexte angepasst und 'Keine Information' als sichtbarer Button entfernt
 HMI_MATRIX = {
     "Gast": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
-        "Störung": {"text": "Was ist passiert oder defekt?", "dd": STANDARD_DROPDOWNS},
-        "Feedback": {"text": "Welches Feedback hast du für uns?", "dd": STANDARD_DROPDOWNS}
+        "Störung": {"text": "Was ist passiert oder defekt? Ich kümmere mich darum.", "dd": STANDARD_DROPDOWNS},
+        "Feedback": {"text": "Welches Feedback hast du für uns? Erzähl mir davon.", "dd": STANDARD_DROPDOWNS}
     },
     "Host": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
         "Information": {"text": "Gern nehme ich deine Notizen auf und ordne sie zu.", "dd": STANDARD_DROPDOWNS},
         "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": []},
-        "Störung": {"text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS},
+        "Störung": {"text": "Was ist passiert? Ich halte es fest.", "dd": STANDARD_DROPDOWNS},
         "Feedback": {"text": "Welches Feedback dokumentieren wir?", "dd": STANDARD_DROPDOWNS}
     }
 }
@@ -270,29 +274,31 @@ if nutzer_rolle is not None:
             "</svg></div></div>", unsafe_allow_html=True
         )
     
+    # Korrektur Issue 91: Buttonbeschriftungen freundlich und präzise nach PPT-Vorgabe
     if nutzer_rolle == "Gast":
         col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"): handle_button_click("Hilfe")
+            if st.button("Ich brauche Hilfe", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"): handle_button_click("Hilfe")
         with col2:
-            if st.button("Es gibt eine Störung.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"): handle_button_click("Störung")
+            if st.button("Es gibt eine Störung", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"): handle_button_click("Störung")
         with col3:
-            if st.button("Ich möchte Feedback geben.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Feedback" else "secondary"): handle_button_click("Feedback")
+            if st.button("Ich möchte Feedback geben", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Feedback" else "secondary"): handle_button_click("Feedback")
                 
     elif nutzer_rolle == "Host":
         col1, col2, col3 = st.columns(3)
         col4, col5 = st.columns(2)
         with col1:
-            if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"): handle_button_click("Hilfe")
+            if st.button("Ich brauche Hilfe", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"): handle_button_click("Hilfe")
         with col2:
-            if st.button("Ich habe neue Infos.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Information" else "secondary"): handle_button_click("Information")
+            if st.button("Ich habe neue Infos", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Information" else "secondary"): handle_button_click("Information")
         with col3:
-            if st.button("Bericht erstellen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"): handle_button_click("Bericht")
+            if st.button("Bericht erstellen", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"): handle_button_click("Bericht")
         with col4:
-            if st.button("Störung melden.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"): handle_button_click("Störung")
+            if st.button("Störung melden", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"): handle_button_click("Störung")
         with col5:
-            if st.button("Feedback erfassen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Feedback" else "secondary"): handle_button_click("Feedback")
+            if st.button("Feedback erfassen", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Feedback" else "secondary"): handle_button_click("Feedback")
 
+    # Dropdowns generieren
     if st.session_state.aktive_aktion and nutzer_rolle in HMI_MATRIX:
         aktiver_state = HMI_MATRIX[nutzer_rolle].get(st.session_state.aktive_aktion)
         if aktiver_state:
@@ -341,6 +347,9 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         gewaehlte_objekte_str = ", ".join([f"{k}: {v}" for k, v in konkrete_auswahlen.items()]) if konkrete_auswahlen else "Keines ausgewählt"
         gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if konkrete_auswahlen else None
         
+        # ==========================================
+        # 2D-MATRIX-FILTER & CONTEXT-EXTRAKTION
+        # ==========================================
         if df_wissen is not None and not df_wissen.empty:
             df_gefiltert = df_wissen.copy()
             bez_spalte = "Bezeichnung" if "Bezeichnung" in df_gefiltert.columns else df_gefiltert.columns[0]
@@ -385,16 +394,21 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
             with st.spinner("Villa Avatar überlegt..."):
                 antwort_text = generate_ki_response(
                     f"Rolle: {nutzer_rolle}\nKontext-Aktion des Nutzers: {st.session_state.aktive_aktion}\n"
-                    f"Gewählte(s) HMI-Objekt(e): {gewaehlte_objektes_str if 'gewaehlte_objektes_str' in locals() else gewaehlte_objekte_str}\nAnfrage: {prompt} {kontext}"
+                    f"Gewählte(s) HMI-Objekt(e): {gewaehlte_objekte_str}\nAnfrage: {prompt} {kontext}"
                 )
             st.markdown(antwort_text)
             st.session_state.messages.append({"role": "assistant", "content": antwort_text})
 
-        # Hidden Use Case: "Keine Information" (Korrektur Issue 90 - Anführungszeichen korrigiert)
-        aktuelle_schreib_aktion = st.session_state.aktive_aktion
-        if "leider keine informationen vor" in antwort_text.lower():
-            aktuelle_schreib_aktion = "Keine Information"
+        # ==========================================
+        # EXECUTION ENGINE & HIDDEN LOGGING (KORREKTUR ISSUE 92)
+        # ==========================================
+        schreib_aktion = st.session_state.aktive_aktion
         
-        if drive_service is not None and aktuelle_schreib_aktion in ["Störung", "Feedback", "Keine Information", "Information"]:
-            if dynamic_write_to_excel(drive_service, prompt, nutzer_rolle, gewaehltes_objekt, aktuelle_schreib_aktion, df_lexikon):
-                df_wissen, df_lexikon, _ = load_dynamic_data()
+        # Erkennt den Fallback-Satz und leitet das Logging auf die Spalte 'Keine Information' um
+        if FALLBACK_SATZ.lower() in antwort_text.lower():
+            schreib_aktion = "Keine Information"
+        
+        if drive_service is not None and schreib_aktion in ["Störung", "Feedback", "Keine Information", "Information"]:
+            with st.spinner("Eintrag wird formatsicher in Excel protokolliert..."):
+                if dynamic_write_to_excel(drive_service, prompt, nutzer_rolle, gewaehltes_objekt, schreib_aktion, df_lexikon):
+                    df_wissen, df_lexikon, _ = load_dynamic_data()
