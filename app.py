@@ -35,7 +35,7 @@ def load_dynamic_data():
             
         fh.seek(0)
         
-        # Sicherheits-Check für Sheet-Namen
+        # Sicherheits-Check für Sheet-Namen (Korrektur Issue 80 / 92)
         xl = pd.ExcelFile(fh)
         if "Wissensbasis" not in xl.sheet_names or "Spalten_Lexikon" not in xl.sheet_names:
             st.error(f"Fehler beim Laden der Excel-Matrix: Worksheet named 'Wissensbasis' oder 'Spalten_Lexikon' nicht gefunden. Vorhanden: {xl.sheet_names}")
@@ -58,8 +58,19 @@ with st.spinner("Initialisiere dynamische Matrix aus Google Drive..."):
     df_wissen, df_lexikon, drive_service = load_dynamic_data()
 
 # ==========================================
-# 2. DYNAMISCHE SCHREIB-ENGINE (NAMENSBASIERT)
+# 2. DYNAMISCHE SCHREIB-ENGINE (ROBUST)
 # ==========================================
+def find_column_by_fuzzy_name(headers, dynamic_name):
+    """Sucht Spaltennamen fehlertolerant, falls Suffixe verwendet wurden."""
+    if dynamic_name in headers:
+        return headers.index(dynamic_name) + 1
+    if f"{dynamic_name} [Input]" in headers:
+        return headers.index(f"{dynamic_name} [Input]") + 1
+    for idx, h in enumerate(headers):
+        if dynamic_name.lower() in h.lower():
+            return idx + 1
+    return None
+
 def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, df_lexikon_current):
     try:
         request = service.files().get_media(fileId=FILE_ID)
@@ -97,20 +108,20 @@ def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, 
             row_idx = ws.max_row + 1
             ws.cell(row=row_idx, column=col_bez_idx, value="Nicht gefunden")
 
-        # Zielspalten ermitteln je nach Action Type
+        # Zielspalten fehlertolerant ermitteln
         t_col, status_col, status_val = None, None, None
         
         if action_type == "Störung":
-            t_col = headers.index("Störung [Input]") + 1 if "Störung [Input]" in headers else None
-            status_col = headers.index("Störung Status") + 1 if "Störung Status" in headers else None
+            t_col = find_column_by_fuzzy_name(headers, "Störung")
+            status_col = find_column_by_fuzzy_name(headers, "Störung Status")
             status_val = "aktiv"
         elif action_type == "Feedback":
-            t_col = headers.index("Feedback [Input]") + 1 if "Feedback [Input]" in headers else None
-            status_col = headers.index("Feedback Status") + 1 if "Feedback Status" in headers else None
+            t_col = find_column_by_fuzzy_name(headers, "Feedback")
+            status_col = find_column_by_fuzzy_name(headers, "Feedback Status")
             status_val = "offen"
         elif action_type == "Keine Information":
-            t_col = headers.index("Keine Information") + 1 if "Keine Information" in headers else None
-            status_col = headers.index("Keine Information Status") + 1 if "Keine Information Status" in headers else None
+            t_col = find_column_by_fuzzy_name(headers, "Keine Information")
+            status_col = find_column_by_fuzzy_name(headers, "Keine Information Status")
             status_val = "offen"
         elif action_type == "Information":
             mögliche_spalten = df_lexikon_current['Spaltenname'].tolist() if df_lexikon_current is not None else []
@@ -123,7 +134,7 @@ def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, 
 
         zeitstempel = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
         
-        # Wert in Hauptspalte schreiben (Gemäß Vorgabe: - [Zeitstempel | Rolle]: Text)
+        # Wert in Hauptspalte schreiben
         alt_text = str(ws.cell(row=row_idx, column=t_col).value) if ws.cell(row=row_idx, column=t_col).value is not None else ""
         neu_text = f"{alt_text}\n- [{zeitstempel} | {nutzername}]: {text}".strip() if alt_text else f"- [{zeitstempel} | {nutzername}]: {text}"
         cell_text = ws.cell(row=row_idx, column=t_col, value=neu_text)
@@ -179,7 +190,7 @@ def ai_waehle_stammdaten_spalte(user_text, verfuegbare_spalten):
         Analysiere diesen Host-Text: "{user_text}"
         In welche dieser Excel-Spalten gehört die Info am ehesten?
         {spalten_str}
-        Antworte NUR mit dem exakten Spaltennamen.
+        Antworte NUR with dem exakten Spaltennamen.
         """
         response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         return response.text.strip().replace('"', '').replace("'", "")
@@ -206,7 +217,7 @@ def generate_ki_response(prompt_text):
         return f"⚠️ Fehler: {e}"
 
 # ==========================================
-# 4. UI & HMI-MATRIX (STRIKT GEMÄSS GEM-ppt MASTER)
+# 4. UI & HMI-MATRIX (STRIKT NACH MASTER GEM)
 # ==========================================
 st.markdown("""
     <style>
@@ -224,19 +235,19 @@ st.markdown("Hallo! Ich bin Villa Avatar. Wähle unten deine Rolle aus, um zu be
 
 STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
 
-# Internes Mapping von HMI-Phrasen auf logische Funktions-Typen
+# Mappt den ausformulierten Button-Satz (Master GEM) im Hintergrund auf den logischen Typ
 HMI_MATRIX = {
     "Gast": {
         "Ich brauche Hilfe.": {"type": "Hilfe", "text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
-        "Ich möchte eine Störung melden.": {"type": "Störung", "text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS},
-        "Ich möchte Feedback geben.": {"type": "Feedback", "text": "Welches Feedback hast du?", "dd": STANDARD_DROPDOWNS}
+        "Ich möchte eine Störung melden.": {"type": "Störung", "text": "Was ist passiert oder defekt? Ich kümmere mich darum.", "dd": STANDARD_DROPDOWNS},
+        "Ich möchte Feedback geben.": {"type": "Feedback", "text": "Welches Feedback hast du für uns? Erzähl mir davon.", "dd": STANDARD_DROPDOWNS}
     },
     "Host": {
         "Ich brauche Hilfe.": {"type": "Hilfe", "text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
-        "Ich habe neue Informationen.": {"type": "Information", "text": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.", "dd": STANDARD_DROPDOWNS},
+        "Ich habe neue Informationen.": {"type": "Information", "text": "Gern nehme ich deine Notizen auf und ordne sie zu.", "dd": STANDARD_DROPDOWNS},
         "Ich benötige einen Bericht.": {"type": "Bericht", "text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": []},
-        "Ich möchte eine Störung melden.": {"type": "Störung", "text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS},
-        "Ich möchte Feedback geben.": {"type": "Feedback", "text": "Welches Feedback hast du?", "dd": STANDARD_DROPDOWNS}
+        "Ich möchte eine Störung melden.": {"type": "Störung", "text": "Was ist passiert? Ich halte es fest.", "dd": STANDARD_DROPDOWNS},
+        "Ich möchte Feedback geben.": {"type": "Feedback", "text": "Welches Feedback dokumentieren wir?", "dd": STANDARD_DROPDOWNS}
     }
 }
 
@@ -272,7 +283,7 @@ if nutzer_rolle is not None:
             "</svg></div></div>", unsafe_allow_html=True
         )
     
-    # Render-Engine für exakte Button-Texte laut GEM (ausformuliert mit Punkt)
+    # Exakte Button-Texte laut Master GEM (Vollständige Sätze mit Punkt)
     if nutzer_rolle == "Gast":
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -334,7 +345,7 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         with st.chat_message("user"): st.markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
         
-        # Logischen Aktionstyp aus dem HMI-Satz extrahieren
+        # Logischen Aktionstyp für das Backend ermitteln
         logischer_aktions_type = HMI_MATRIX[nutzer_rolle][st.session_state.aktive_aktion]["type"]
         
         konkrete_auswahlen = {}
@@ -347,7 +358,7 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         gewaehlte_objekte_str = ", ".join([f"{k}: {v}" for k, v in konkrete_auswahlen.items()]) if konkrete_auswahlen else "Keines ausgewählt"
         gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if konkrete_auswahlen else None
         
-        # 1. SCHREIB-VORGANG FÜR REGULÄRE INPUTS (Nutzt intern den extrahierten Aktionstyp)
+        # 1. SCHREIB-VORGANG FÜR INPUTS (Nutzt den extrahierten Aktionstyp)
         if drive_service is not None and logischer_aktions_type in ["Störung", "Feedback", "Information"]:
             with st.spinner("Eintrag wird formatsicher in Excel protokolliert..."):
                 dynamic_write_to_excel(drive_service, prompt, nutzer_rolle, gewaehltes_objekt, logischer_aktions_type, df_lexikon)
@@ -355,4 +366,55 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         # 2. MATRIX-FILTER & CONTEXT-EXTRAKTION
         if df_wissen is not None and not df_wissen.empty:
             df_gefiltert = df_wissen.copy()
-            bez_spalte = "Bezeichnung" if "Bezeichnung" in df_gefiltert.columns else df_gefiltert.
+            bez_spalte = "Bezeichnung" if "Bezeichnung" in df_gefiltert.columns else df_gefiltert.columns[0]
+            kat_spalte = "Wo?" if "Wo?" in df_gefiltert.columns else df_gefiltert.columns[1]
+            
+            if gewaehltes_objekt and gewaehltes_objekt != "Nicht gefunden":
+                df_gefiltert = df_gefiltert[df_gefiltert[bez_spalte].astype(str).str.strip().str.lower() == str(gewaehltes_objekt).strip().lower()]
+            elif konkrete_auswahlen:
+                mask = pd.Series(False, index=df_gefiltert.index)
+                for kat in konkrete_auswahlen.keys():
+                    if "innen" in kat.lower(): mask = mask | df_gefiltert[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
+                    elif "außen" in kat.lower() or "aussen" in kat.lower(): mask = mask | df_gefiltert[kat_spalte].astype(str).str.contains("außen|aussen", case=False, na=False)
+                    elif "nähe" in kat.lower() or "naehe" in kat.lower(): mask = mask | df_gefiltert[kat_spalte].astype(str).str.contains("nähe|naehe|In der Nähe", case=False, na=False)
+                    else: mask = mask | df_gefiltert[kat_spalte].astype(str).str.contains(kat, case=False, na=False)
+                df_gefiltert = df_gefiltert[mask]
+                
+            if nutzer_rolle == "Gast":
+                if "Relevanz Gast" in df_gefiltert.columns:
+                    df_gefiltert = df_gefiltert[df_gefiltert["Relevanz Gast"].astype(str).str.strip().str.lower() == "x"]
+                if df_lexikon is not None and "Sichtbar für Gast" in df_lexikon.columns:
+                    erlaubt = df_lexikon[df_lexikon["Sichtbar für Gast"].astype(str).str.strip().str.lower() == "ja"]["Spaltenname"].tolist()
+                    erlaubte_spalten = [c for c in df_gefiltert.columns if str(c).strip() in erlaubt]
+                    df_gefiltert = df_gefiltert[erlaubte_spalten]
+
+            lexikon_text = ""
+            if df_lexikon is not None and not df_lexikon.empty:
+                lexikon_text = "REGELN FÜR SPALTEN (Spalten_Lexikon):\n"
+                for _, row in df_lexikon.iterrows():
+                    spaltenname = str(row.get("Spaltenname", ""))
+                    if spaltenname in df_gefiltert.columns:
+                        bedeutung = str(row.get("Bedeutung / Beschreibung", ""))
+                        format_regel = str(row.get("Erwartetes Format / Regel", ""))
+                        lexikon_text += f"- '{spaltenname}': {bedeutung} (Format: {format_regel})\n"
+
+            if df_gefiltert.empty: 
+                df_gefiltert = pd.DataFrame(["Keine passenden/freigegebenen Daten gefunden."])
+            kontext = f"\n\n{lexikon_text}\nAktuelle Daten aus der Wissensbasis:\n{df_gefiltert.to_string(index=False)}"
+        else:
+            kontext = ""
+        
+        with st.chat_message("assistant"):
+            with st.spinner("Villa Avatar überlegt..."):
+                antwort_text = generate_ki_response(
+                    f"Rolle: {nutzer_rolle}\nKontext-Aktion des Nutzers: {logischer_aktions_type}\n"
+                    f"Gewählte(s) HMI-Objekt(e): {gewaehlte_objekte_str}\nAnfrage: {prompt} {kontext}"
+                )
+            st.markdown(antwort_text)
+            st.session_state.messages.append({"role": "assistant", "content": antwort_text})
+
+        # 3. HIDDEN USE CASE LOGGING (Nachträgliches Schreiben bei fehlender Information)
+        if drive_service is not None and FALLBACK_SATZ.lower() in antwort_text.lower():
+            with st.spinner("Wissenslücke wird im Hintergrund dokumentiert..."):
+                if dynamic_write_to_excel(drive_service, prompt, nutzer_rolle, gewaehltes_objekt, "Keine Information", df_lexikon):
+                    df_wissen, df_lexikon, _ = load_dynamic_data()
