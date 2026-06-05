@@ -19,66 +19,44 @@ Um kritische interne Informationen (wie Kosten, Kontakte oder interne Steuerungs
 
 ### Achse 1: Zeilen-Filter (Welche Objekte existieren für den Gast?)
 * **Regel:** Die App prüft in Tabelle 1 die Spalte `Relevanz Gast`.
-* **Logik:** Nur Zeilen, die in dieser Spalte ein `x` enthalten, werden für die Rolle *Gast* geladen. Zeilen ohne `x` (z. B. rein interne Infrastruktur) werden für den Gast komplett unsichtbar gemacht.
+* **Logik:** Nur Zeilen, die in dieser Spalte ein `x` enthalten, werden für die Rolle *Gast* geladen. Zeilen ohne `x` werden für den Gast komplett unsichtbar gemacht.
 
 ### Achse 2: Spalten-Filter (Welche Details darf der Gast sehen?)
 * **Regel:** Die App prüft in Tabelle 2 die Spalte `Sichtbar für Gast`.
-* **Logik:** Bei den freigegebenen Objekten werden für die Rolle *Gast* ausschließlich die Spalten an die KI übergeben, bei denen im Spalten-Lexikon ein `ja` hinterlegt ist. Spalten mit `nein` (z. B. *Kosten*, *Kontakt*, *Details Steuerung*) werden im Speicher gelöscht, bevor die KI den Kontext erhält.
+* **Logik:** Bei den freigegebenen Objekten werden für die Rolle *Gast* ausschließlich die Spalten an die KI übergeben, bei denen im Spalten-Lexikon ein `ja` hinterlegt ist. Spalten mit `nein` werden im Speicher gelöscht, bevor die KI den Kontext erhält.
 
 ---
 
-## 3. Datenmodell & Spalten-Synchronisation
+## 3. Dynamisches Datenmodell (Schema-agnostisch)
 
-Die Spaltenköpfe in Tabelle 1 müssen zeichengenau mit den Einträgen der Spalte `Spaltenname` in Tabelle 2 übereinstimmen. 
+Das System besitzt **keine** fest einprogrammierten Inhalts-Spalten. Das Datenmodell bestimmt sich bei jedem App-Start vollständig dynamisch aus der Excel-Datei nach folgendem Algorithmus:
 
-### Definiertes Spalten-Set und Gast-Relevanz:
-1. **Bezeichnung** (Sichtbar für Gast: `ja`)
-2. **Wo?** (Sichtbar für Gast: `ja`)
-3. **Relevanz Gast** (Sichtbar für Gast: `ja`)
-4. **System** (Sichtbar für Gast: `nein`)
-5. **Marke/ Typ** (Sichtbar für Gast: `nein`)
-6. **Besonderheit** (Sichtbar für Gast: `nein`)
-7. **Quelle Handwerker/ Verkäufer** (Sichtbar für Gast: `nein`)
-8. **Details Nutzung [Output]** (Sichtbar für Gast: `ja`)
-9. **Details Steuerung** (Sichtbar für Gast: `nein`)
-10. **Störung [Input]** (Sichtbar für Gast: `ja`)
-11. **Störung Status** (Sichtbar für Gast: `ja` | Erwartet: `[aktiv, OK]`)
-12. **Wartung** (Sichtbar für Gast: `nein`)
-13. **Vorsorge** (Sichtbar für Gast: `nein`)
-14. **Ersatzteile** (Sichtbar für Gast: `nein`)
-15. **Ersatzteil Quelle** (Sichtbar für Gast: `nein`)
-16. **Ersatzteil Lagerort** (Sichtbar für Gast: `nein`)
-17. **Details zur Vorsorge** (Sichtbar für Gast: `nein`)
-18. **Details zur Wartung** (Sichtbar für Gast: `nein`)
-19. **Wartung erfolgt** (Sichtbar für Gast: `nein`)
-20. **Schlüssel (HW, SW)** (Sichtbar für Gast: `nein`)
-21. **Schlüssel Gast [Output]** (Sichtbar für Gast: `ja`)
-22. **Dokumente/ Link zur Anleitung [Output]** (Sichtbar für Gast: `ja`)
-23. **Kontakt [Output]** (Sichtbar für Gast: `nein`)
-24. **Kosten [Output]** (Sichtbar für Gast: `nein`)
-25. **Feedback [Input]** (Sichtbar für Gast: `nein`)
-26. **Feedback Status** (Sichtbar für Gast: `nein` | Erwartet: `[offen, Nein, OK]`)
-27. **Keine Information** (Sichtbar für Gast: `nein` — Erfassungskanal für Wissenslücken)
-28. **Keine Information Status** (Sichtbar für Gast: `nein` | Erwartet: `[offen, Nein, OK]`)
+1. **Schema-Erkennung:** Der Code liest die Header-Zeile von `Wissensbasis` und die Zeilen von `Spalten_Lexikon` ein.
+2. **Rechte-Mapping:** Der Code erstellt zur Laufzeit eine Liste aller Spalten, bei denen im Lexikon `Sichtbar für Gast == "ja"` steht.
+3. **Echtzeit-Filterung:** * Wählt der Nutzer die Rolle **Host**, bekommt die KI alle in Excel existierenden Spalten als Kontext übergeben.
+   * Wählt der Nutzer die Rolle **Gast**, wirft der Code im RAM alle Spalten heraus, die im Lexikon nicht explizit als `ja` deklariert sind.
+4. **Offline-Erweiterbarkeit:** Fügt der Admin offline eine neue Spalte in Tabelle 1 hinzu und pflegt sie in Tabelle 2 ein, wird sie von der App sofort ohne Code-Änderung berücksichtigt.
+
+*Ausnahme (System-Anker):* Die Spalten `Bezeichnung`, `Wo?`, `Relevanz Gast`, sowie die Input/Status-Felder für Störungen, Feedbacks und „Keine Information“ sind im Code namentlich hinterlegt, um die HMI-Eingabemasken und Kernfilter zu steuern.
 
 ---
 
 ## 4. HMI-Schnittstelle & Use Cases
 
-Die Benutzeroberfläche (Streamlit HMI) verzichtet auf administrative Schaltflächen (da der Admin direkt in Excel arbeitet) und unterscheidet strikt zwei Rollen:
+Die Benutzeroberfläche (Streamlit HMI) verzichtet auf administrative Schaltflächen und unterscheidet strikt zwei Rollen:
 
 ### Rolle: Gast
 * **Use Case 1: Ich brauche Hilfe / Frage stellen** -> KI-gestützte Beantwortung. Kontext ist streng zweidimensional gefiltert (nur Zeilen mit `x`, nur Spalten mit `ja`).
-* **Use Case 2: Eine Störung melden** -> Freitextfeld. Der Eintrag wird per Append-Logik in die Spalte `Störung [Input]` der gewählten Zeile geschrieben. Der `Störung Status` wird automatisch auf `aktiv` gesetzt.
+* **Use Case 2: Eine Störung melden** -> Freitextfeld. Der Eintrag wird per Append-Logik in die Spalte `Störung [Input]` geschrieben. Der `Störung Status` wird automatisch auf `aktiv` gesetzt.
 * **Use Case 3: Feedback geben** -> Freitextfeld. Eintrag wird per Append-Logik in `Feedback [Input]` geschrieben; `Feedback Status` wird auf `offen` gesetzt.
-* **Use Case 4: Unbeantwortete Fragen / Keine Information** -> Wenn der Gast eine Information nicht finden konnte, kann er diese hier eintragen. Die App schreibt den Text in die Spalte `Keine Information` und setzt den `Keine Information Status` auf `offen`.
+* **Use Case 4: Unbeantwortete Fragen / Keine Information** -> Eintrag wird per Append-Logik in `Keine Information` geschrieben und der Status auf `offen` gesetzt.
 
 ### Rolle: Host
-* **Use Case 1: Ich brauche Hilfe / Frage stellen** -> KI-Zugriff auf die *gesamte* Matrix (alle Zeilen, alle Spalten).
+* **Use Case 1: Ich brauche Hilfe / Frage stellen** -> KI-Zugriff auf die gesamte Matrix (alle Zeilen, alle Spalten).
 * **Use Case 2: Neue Informationen eintragen** -> Ermöglicht das Anhängen von operativen Notizen an bestehende Objekte (Append-Logik).
 * **Use Case 3: Störung melden / verwalten** -> Kann Störungen melden oder den Status einsehen.
 * **Use Case 4: Feedback erfassen** -> Dokumentation von Feedback im System.
-* **Use Case 5: Unbeantwortete Fragen protokollieren** -> Der Host kann Wissenslücken, die im Gespräch mit Gästen auffallen, direkt für den Admin einsteuern.
+* **Use Case 5: Unbeantwortete Fragen protokollieren** -> Festhalten von Wissenslücken aus Gastgesprächen.
 * **Use Case 6: Bericht generieren** -> Die KI analysiert periodische Daten (z. B. alle aktiven Störungen, offene Feedbacks oder ungelöste Fragen) und erstellt eine strukturierte Zusammenfassung für den Host.
 
 ---
