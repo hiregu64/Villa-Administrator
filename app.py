@@ -35,7 +35,6 @@ def load_dynamic_data():
             
         fh.seek(0)
         
-        # Sicherheits-Check für Sheet-Namen (Korrektur Issue 80 / 92)
         xl = pd.ExcelFile(fh)
         if "Wissensbasis" not in xl.sheet_names or "Spalten_Lexikon" not in xl.sheet_names:
             st.error(f"Fehler beim Laden der Excel-Matrix: Worksheet named 'Wissensbasis' oder 'Spalten_Lexikon' nicht gefunden. Vorhanden: {xl.sheet_names}")
@@ -45,7 +44,6 @@ def load_dynamic_data():
         fh.seek(0)
         df_lexikon = pd.read_excel(fh, sheet_name="Spalten_Lexikon")
         
-        # 'Wo?' (Kategorie) vorwärts auffüllen für Dropdowns
         if df_wissen is not None and not df_wissen.empty and "Wo?" in df_wissen.columns:
             df_wissen["Wo?"] = df_wissen["Wo?"].ffill()
             
@@ -58,17 +56,37 @@ with st.spinner("Initialisiere dynamische Matrix aus Google Drive..."):
     df_wissen, df_lexikon, drive_service = load_dynamic_data()
 
 # ==========================================
-# 2. DYNAMISCHE SCHREIB-ENGINE (ROBUST)
+# 2. DYNAMISCHE SCHREIB-ENGINE (BEREINIGTES FUZZY-MATCHING)
 # ==========================================
 def find_column_by_fuzzy_name(headers, dynamic_name):
-    """Sucht Spaltennamen fehlertolerant, falls Suffixe verwendet wurden."""
-    if dynamic_name in headers:
-        return headers.index(dynamic_name) + 1
-    if f"{dynamic_name} [Input]" in headers:
-        return headers.index(f"{dynamic_name} [Input]") + 1
-    for idx, h in enumerate(headers):
-        if dynamic_name.lower() in h.lower():
+    """Eliminiert versteckte Leerzeichen, Zeilenumbrüche und Suffixe aus den Excel-Headern."""
+    cleaned_headers = [str(h).strip().lower().replace("\n", " ").replace("\r", " ") for h in headers]
+    search_name = str(dynamic_name).strip().lower()
+    
+    # 1. Direkter Match auf den bereinigten Namen
+    if search_name in cleaned_headers:
+        return cleaned_headers.index(search_name) + 1
+        
+    # 2. Match mit typischen Excel-[Input]-Suffixen
+    if f"{search_name} [input]" in cleaned_headers:
+        return cleaned_headers.index(f"{search_name} [input]") + 1
+        
+    # 3. Match für den Status-Workflow
+    if f"{search_name} status" in cleaned_headers:
+        return cleaned_headers.index(f"{search_name} status") + 1
+        
+    # 4. Inhaltliche Teilübereinstimmung (Fängt "Keine Information " mit Rest-Leerzeichen ab)
+    for idx, h in enumerate(cleaned_headers):
+        if search_name in h:
             return idx + 1
+            
+    # 5. Backup-Synonyme für den Hidden Use Case (Sicherheitsnetz)
+    if search_name == "keine information":
+        synonyme = ["wissenslücke", "wissensluecke", "fehlende info", "unbeantwortet"]
+        for syn in synonyme:
+            for idx, h in enumerate(cleaned_headers):
+                if syn in h:
+                    return idx + 1
     return None
 
 def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, df_lexikon_current):
@@ -83,12 +101,11 @@ def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, 
         wb = openpyxl.load_workbook(fh)
         ws = wb["Wissensbasis"]
         
-        # Header auslesen um Spalten dynamisch zu finden
-        headers = [str(c.value).strip() if c.value else "" for c in ws[1]]
+        headers = [str(c.value) if c.value else "" for c in ws[1]]
         
-        # Zeile (Objekt) finden
         row_idx = None
-        col_bez_idx = headers.index("Bezeichnung") + 1 if "Bezeichnung" in headers else 1
+        col_bez_idx = find_column_by_fuzzy_name(headers, "Bezeichnung")
+        if col_bez_idx is None: col_bez_idx = 1
         
         if objekt_name and str(objekt_name).strip().lower() != "nicht gefunden":
             for r in range(2, ws.max_row + 1):
@@ -97,7 +114,6 @@ def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, 
                     row_idx = r
                     break
                     
-        # Fallback auf "Nicht gefunden"
         if row_idx is None:
             for r in range(2, ws.max_row + 1):
                 val = ws.cell(row=r, column=col_bez_idx).value
@@ -108,7 +124,6 @@ def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, 
             row_idx = ws.max_row + 1
             ws.cell(row=row_idx, column=col_bez_idx, value="Nicht gefunden")
 
-        # Zielspalten fehlertolerant ermitteln
         t_col, status_col, status_val = None, None, None
         
         if action_type == "Störung":
@@ -126,21 +141,19 @@ def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, 
         elif action_type == "Information":
             mögliche_spalten = df_lexikon_current['Spaltenname'].tolist() if df_lexikon_current is not None else []
             zielspalte_name = ai_waehle_stammdaten_spalte(text, mögliche_spalten)
-            t_col = headers.index(zielspalte_name) + 1 if zielspalte_name in headers else (headers.index("Details Nutzung [Output]") + 1 if "Details Nutzung [Output]" in headers else 8)
+            t_col = headers.index(zielspalte_name) + 1 if zielspalte_name in headers else (find_column_by_fuzzy_name(headers, "Details Nutzung") or 8)
         
         if t_col is None:
-            st.error(f"Konnte die Zielspalte für '{action_type}' in der Excel-Tabelle nicht finden.")
+            st.error(f"Konnte die Zielspalte für '{action_type}' in der Excel-Tabelle nicht finden. Bitte prüfe die Spaltenüberschriften.")
             return False
 
         zeitstempel = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
         
-        # Wert in Hauptspalte schreiben
         alt_text = str(ws.cell(row=row_idx, column=t_col).value) if ws.cell(row=row_idx, column=t_col).value is not None else ""
         neu_text = f"{alt_text}\n- [{zeitstempel} | {nutzername}]: {text}".strip() if alt_text else f"- [{zeitstempel} | {nutzername}]: {text}"
         cell_text = ws.cell(row=row_idx, column=t_col, value=neu_text)
         cell_text.font = Font(color="0000FF")
 
-        # Status schreiben
         if status_col is not None and status_val is not None:
             alt_status = str(ws.cell(row=row_idx, column=status_col).value) if ws.cell(row=row_idx, column=status_col).value is not None else ""
             neu_status = f"{alt_status}\n- [{zeitstempel} | {nutzername}]: {status_val}".strip() if alt_status else f"- [{zeitstempel} | {nutzername}]: {status_val}"
@@ -190,7 +203,7 @@ def ai_waehle_stammdaten_spalte(user_text, verfuegbare_spalten):
         Analysiere diesen Host-Text: "{user_text}"
         In welche dieser Excel-Spalten gehört die Info am ehesten?
         {spalten_str}
-        Antworte NUR with dem exakten Spaltennamen.
+        Antworte NUR mit dem exakten Spaltennamen.
         """
         response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         return response.text.strip().replace('"', '').replace("'", "")
@@ -217,7 +230,7 @@ def generate_ki_response(prompt_text):
         return f"⚠️ Fehler: {e}"
 
 # ==========================================
-# 4. UI & HMI-MATRIX (STRIKT NACH MASTER GEM)
+# 4. UI & HMI-MATRIX (STRIKT GEMÄSS MASTER GEM)
 # ==========================================
 st.markdown("""
     <style>
@@ -235,7 +248,6 @@ st.markdown("Hallo! Ich bin Villa Avatar. Wähle unten deine Rolle aus, um zu be
 
 STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
 
-# Mappt den ausformulierten Button-Satz (Master GEM) im Hintergrund auf den logischen Typ
 HMI_MATRIX = {
     "Gast": {
         "Ich brauche Hilfe.": {"type": "Hilfe", "text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
@@ -283,7 +295,6 @@ if nutzer_rolle is not None:
             "</svg></div></div>", unsafe_allow_html=True
         )
     
-    # Exakte Button-Texte laut Master GEM (Vollständige Sätze mit Punkt)
     if nutzer_rolle == "Gast":
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -345,7 +356,6 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         with st.chat_message("user"): st.markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
         
-        # Logischen Aktionstyp für das Backend ermitteln
         logischer_aktions_type = HMI_MATRIX[nutzer_rolle][st.session_state.aktive_aktion]["type"]
         
         konkrete_auswahlen = {}
@@ -358,12 +368,10 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         gewaehlte_objekte_str = ", ".join([f"{k}: {v}" for k, v in konkrete_auswahlen.items()]) if konkrete_auswahlen else "Keines ausgewählt"
         gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if konkrete_auswahlen else None
         
-        # 1. SCHREIB-VORGANG FÜR INPUTS (Nutzt den extrahierten Aktionstyp)
         if drive_service is not None and logischer_aktions_type in ["Störung", "Feedback", "Information"]:
             with st.spinner("Eintrag wird formatsicher in Excel protokolliert..."):
                 dynamic_write_to_excel(drive_service, prompt, nutzer_rolle, gewaehltes_objekt, logischer_aktions_type, df_lexikon)
 
-        # 2. MATRIX-FILTER & CONTEXT-EXTRAKTION
         if df_wissen is not None and not df_wissen.empty:
             df_gefiltert = df_wissen.copy()
             bez_spalte = "Bezeichnung" if "Bezeichnung" in df_gefiltert.columns else df_gefiltert.columns[0]
@@ -413,7 +421,6 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
             st.markdown(antwort_text)
             st.session_state.messages.append({"role": "assistant", "content": antwort_text})
 
-        # 3. HIDDEN USE CASE LOGGING (Nachträgliches Schreiben bei fehlender Information)
         if drive_service is not None and FALLBACK_SATZ.lower() in antwort_text.lower():
             with st.spinner("Wissenslücke wird im Hintergrund dokumentiert..."):
                 if dynamic_write_to_excel(drive_service, prompt, nutzer_rolle, gewaehltes_objekt, "Keine Information", df_lexikon):
