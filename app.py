@@ -35,7 +35,7 @@ def load_dynamic_data():
             
         fh.seek(0)
         
-        # NEU: Sicherheits-Check für Sheet-Namen (Korrektur Issue 80)
+        # Sicherheits-Check für Sheet-Namen (Korrektur Issue 80)
         xl = pd.ExcelFile(fh)
         if "Wissensbasis" not in xl.sheet_names or "Spalten_Lexikon" not in xl.sheet_names:
             st.error(f"Fehler beim Laden der Excel-Matrix: Worksheet named 'Wissensbasis' oder 'Spalten_Lexikon' nicht gefunden. Vorhanden: {xl.sheet_names}")
@@ -130,7 +130,7 @@ def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, 
         cell_text = ws.cell(row=row_idx, column=t_col, value=neu_text)
         cell_text.font = Font(color="0000FF")
 
-        # Status schreiben (Falls vorhanden, bei 'Information' z.B. nicht)
+        # Status schreiben
         if status_col is not None and status_val is not None:
             alt_status = str(ws.cell(row=row_idx, column=status_col).value) if ws.cell(row=row_idx, column=status_col).value is not None else ""
             neu_status = f"{alt_status}\n- [{zeitstempel} | {nutzername}]: {status_val}".strip() if alt_status else f"- [{zeitstempel} | {nutzername}]: {status_val}"
@@ -205,7 +205,7 @@ def generate_ki_response(prompt_text):
         return f"⚠️ Fehler: {e}"
 
 # ==========================================
-# 4. UI & HMI-MATRIX (EXAKT DIE PPT BUTTONS)
+# 4. UI & HMI-MATRIX (KORREKTUR ISSUE 81)
 # ==========================================
 st.markdown("""
     <style>
@@ -223,7 +223,6 @@ st.markdown("Hallo! Ich bin Villa Avatar. Wähle unten deine Rolle aus, um zu be
 
 STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
 
-# Korrektur Issue 81 & Hidden Use Case: "Keine Information" komplett aus HMI gelöscht
 HMI_MATRIX = {
     "Gast": {
         "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
@@ -294,7 +293,6 @@ if nutzer_rolle is not None:
         with col5:
             if st.button("Feedback erfassen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Feedback" else "secondary"): handle_button_click("Feedback")
 
-    # Dropdowns generieren
     if st.session_state.aktive_aktion and nutzer_rolle in HMI_MATRIX:
         aktiver_state = HMI_MATRIX[nutzer_rolle].get(st.session_state.aktive_aktion)
         if aktiver_state:
@@ -343,9 +341,6 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         gewaehlte_objekte_str = ", ".join([f"{k}: {v}" for k, v in konkrete_auswahlen.items()]) if konkrete_auswahlen else "Keines ausgewählt"
         gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if konkrete_auswahlen else None
         
-        # ==========================================
-        # 2D-MATRIX-FILTER & CONTEXT-EXTRAKTION
-        # ==========================================
         if df_wissen is not None and not df_wissen.empty:
             df_gefiltert = df_wissen.copy()
             bez_spalte = "Bezeichnung" if "Bezeichnung" in df_gefiltert.columns else df_gefiltert.columns[0]
@@ -390,16 +385,14 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
             with st.spinner("Villa Avatar überlegt..."):
                 antwort_text = generate_ki_response(
                     f"Rolle: {nutzer_rolle}\nKontext-Aktion des Nutzers: {st.session_state.aktive_aktion}\n"
-                    f"Gewählte(s) HMI-Objekt(e): {gewaehlte_objects_str if 'gewaehlte_objects_str' in locals() else gewaehlte_objekte_str}\nAnfrage: {prompt} {kontext}"
+                    f"Gewählte(s) HMI-Objekt(e): {gewaehlte_objektes_str if 'gewaehlte_objektes_str' in locals() else gewaehlte_objekte_str}\nAnfrage: {prompt} {kontext}"
                 )
             st.markdown(antwort_text)
             st.session_state.messages.append({"role": "assistant", "content": antwort_text})
 
-        # ==========================================
-        # HIDDEN USE CASE LOGGING ("Keine Information")
-        # ==========================================
+        # Hidden Use Case: "Keine Information" (Korrektur Issue 90 - Anführungszeichen korrigiert)
         aktuelle_schreib_aktion = st.session_state.aktive_aktion
-        if „leider keine informationen vor“ in antwort_text.lower():
+        if "leider keine informationen vor" in antwort_text.lower():
             aktuelle_schreib_aktion = "Keine Information"
         
         if drive_service is not None and aktuelle_schreib_aktion in ["Störung", "Feedback", "Keine Information", "Information"]:
