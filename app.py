@@ -35,7 +35,7 @@ def load_dynamic_data():
             
         fh.seek(0)
         
-        # Sicherheits-Check für Sheet-Namen (Korrektur Issue 80 / 92)
+        # Sicherheits-Check für Sheet-Namen
         xl = pd.ExcelFile(fh)
         if "Wissensbasis" not in xl.sheet_names or "Spalten_Lexikon" not in xl.sheet_names:
             st.error(f"Fehler beim Laden der Excel-Matrix: Worksheet named 'Wissensbasis' oder 'Spalten_Lexikon' nicht gefunden. Vorhanden: {xl.sheet_names}")
@@ -113,7 +113,6 @@ def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, 
             status_col = headers.index("Keine Information Status") + 1 if "Keine Information Status" in headers else None
             status_val = "offen"
         elif action_type == "Information":
-            # Spezifisch für Host: Nutzt AI um Zielspalte zu finden
             mögliche_spalten = df_lexikon_current['Spaltenname'].tolist() if df_lexikon_current is not None else []
             zielspalte_name = ai_waehle_stammdaten_spalte(text, mögliche_spalten)
             t_col = headers.index(zielspalte_name) + 1 if zielspalte_name in headers else (headers.index("Details Nutzung [Output]") + 1 if "Details Nutzung [Output]" in headers else 8)
@@ -124,7 +123,7 @@ def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, 
 
         zeitstempel = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
         
-        # Wert in Hauptspalte schreiben
+        # Wert in Hauptspalte schreiben (Gemäß Vorgabe: - [Zeitstempel | Rolle]: Text)
         alt_text = str(ws.cell(row=row_idx, column=t_col).value) if ws.cell(row=row_idx, column=t_col).value is not None else ""
         neu_text = f"{alt_text}\n- [{zeitstempel} | {nutzername}]: {text}".strip() if alt_text else f"- [{zeitstempel} | {nutzername}]: {text}"
         cell_text = ws.cell(row=row_idx, column=t_col, value=neu_text)
@@ -207,7 +206,7 @@ def generate_ki_response(prompt_text):
         return f"⚠️ Fehler: {e}"
 
 # ==========================================
-# 4. UI & HMI-MATRIX (STRIKT NACH PPT & REQUIREMENTS)
+# 4. UI & HMI-MATRIX (STRIKT GEMÄSS GEM-ppt MASTER)
 # ==========================================
 st.markdown("""
     <style>
@@ -225,18 +224,19 @@ st.markdown("Hallo! Ich bin Villa Avatar. Wähle unten deine Rolle aus, um zu be
 
 STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
 
+# Internes Mapping von HMI-Phrasen auf logische Funktions-Typen
 HMI_MATRIX = {
     "Gast": {
-        "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
-        "Störung": {"text": "Was ist passiert oder defekt? Ich kümmere mich darum.", "dd": STANDARD_DROPDOWNS},
-        "Feedback": {"text": "Welches Feedback hast du für uns? Erzähl mir davon.", "dd": STANDARD_DROPDOWNS}
+        "Ich brauche Hilfe.": {"type": "Hilfe", "text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
+        "Ich möchte eine Störung melden.": {"type": "Störung", "text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS},
+        "Ich möchte Feedback geben.": {"type": "Feedback", "text": "Welches Feedback hast du?", "dd": STANDARD_DROPDOWNS}
     },
     "Host": {
-        "Hilfe": {"text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
-        "Information": {"text": "Gern nehme ich deine Notizen auf und ordne sie zu.", "dd": STANDARD_DROPDOWNS},
-        "Bericht": {"text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": []},
-        "Störung": {"text": "Was ist passiert? Ich halte es fest.", "dd": STANDARD_DROPDOWNS},
-        "Feedback": {"text": "Welches Feedback dokumentieren wir?", "dd": STANDARD_DROPDOWNS}
+        "Ich brauche Hilfe.": {"type": "Hilfe", "text": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
+        "Ich habe neue Informationen.": {"type": "Information", "text": "Gern nehme ich deine Informationen auf und ordne sie in meiner Wissensbasis zu.", "dd": STANDARD_DROPDOWNS},
+        "Ich benötige einen Bericht.": {"type": "Bericht", "text": "Nenne mir bitte den Zeitraum und das Thema.", "dd": []},
+        "Ich möchte eine Störung melden.": {"type": "Störung", "text": "Was ist passiert?", "dd": STANDARD_DROPDOWNS},
+        "Ich möchte Feedback geben.": {"type": "Feedback", "text": "Welches Feedback hast du?", "dd": STANDARD_DROPDOWNS}
     }
 }
 
@@ -244,10 +244,10 @@ if "messages" not in st.session_state: st.session_state.messages = []
 if "aktive_aktion" not in st.session_state: st.session_state.aktive_aktion = None
 if "vorherige_rolle" not in st.session_state: st.session_state.vorherige_rolle = None
 
-def handle_button_click(aktions_name):
+def handle_button_click(aktions_satz):
     for key in list(st.session_state.keys()):
         if key.startswith("sub_cat_wahl_"): del st.session_state[key]
-    st.session_state.aktive_aktion = aktions_name
+    st.session_state.aktive_aktion = aktions_satz
     st.session_state.messages = []  
     st.rerun()
 
@@ -272,28 +272,29 @@ if nutzer_rolle is not None:
             "</svg></div></div>", unsafe_allow_html=True
         )
     
+    # Render-Engine für exakte Button-Texte laut GEM (ausformuliert mit Punkt)
     if nutzer_rolle == "Gast":
         col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("Ich brauche Hilfe", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"): handle_button_click("Hilfe")
+            if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Ich brauche Hilfe." else "secondary"): handle_button_click("Ich brauche Hilfe.")
         with col2:
-            if st.button("Es gibt eine Störung", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"): handle_button_click("Störung")
+            if st.button("Ich möchte eine Störung melden.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Ich möchte eine Störung melden." else "secondary"): handle_button_click("Ich möchte eine Störung melden.")
         with col3:
-            if st.button("Ich möchte Feedback geben", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Feedback" else "secondary"): handle_button_click("Feedback")
+            if st.button("Ich möchte Feedback geben.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Ich möchte Feedback geben." else "secondary"): handle_button_click("Ich möchte Feedback geben.")
                 
     elif nutzer_rolle == "Host":
         col1, col2, col3 = st.columns(3)
         col4, col5 = st.columns(2)
         with col1:
-            if st.button("Ich brauche Hilfe", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Hilfe" else "secondary"): handle_button_click("Hilfe")
+            if st.button("Ich brauche Hilfe.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Ich brauche Hilfe." else "secondary"): handle_button_click("Ich brauche Hilfe.")
         with col2:
-            if st.button("Ich habe neue Infos", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Information" else "secondary"): handle_button_click("Information")
+            if st.button("Ich habe neue Informationen.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Ich habe neue Informationen." else "secondary"): handle_button_click("Ich habe neue Informationen.")
         with col3:
-            if st.button("Bericht erstellen", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Bericht" else "secondary"): handle_button_click("Bericht")
+            if st.button("Ich benötige einen Bericht.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Ich benötige einen Bericht." else "secondary"): handle_button_click("Ich benötige einen Bericht.")
         with col4:
-            if st.button("Störung melden", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Störung" else "secondary"): handle_button_click("Störung")
+            if st.button("Ich möchte eine Störung melden.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Ich möchte eine Störung melden." else "secondary"): handle_button_click("Ich möchte eine Störung melden.")
         with col5:
-            if st.button("Feedback erfassen", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Feedback" else "secondary"): handle_button_click("Feedback")
+            if st.button("Ich möchte Feedback geben.", use_container_width=True, type="primary" if st.session_state.aktive_aktion == "Ich möchte Feedback geben." else "secondary"): handle_button_click("Ich möchte Feedback geben.")
 
     if st.session_state.aktive_aktion and nutzer_rolle in HMI_MATRIX:
         aktiver_state = HMI_MATRIX[nutzer_rolle].get(st.session_state.aktive_aktion)
@@ -333,6 +334,9 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         with st.chat_message("user"): st.markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
         
+        # Logischen Aktionstyp aus dem HMI-Satz extrahieren
+        logischer_aktions_type = HMI_MATRIX[nutzer_rolle][st.session_state.aktive_aktion]["type"]
+        
         konkrete_auswahlen = {}
         if st.session_state.aktive_aktion and nutzer_rolle in HMI_MATRIX:
             for kat in HMI_MATRIX[nutzer_rolle][st.session_state.aktive_aktion]["dd"]:
@@ -343,63 +347,12 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         gewaehlte_objekte_str = ", ".join([f"{k}: {v}" for k, v in konkrete_auswahlen.items()]) if konkrete_auswahlen else "Keines ausgewählt"
         gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if konkrete_auswahlen else None
         
-        # 1. SCHREIB-VORGANG FÜR REGULÄRE INPUTS
-        if drive_service is not None and st.session_state.aktive_aktion in ["Störung", "Feedback", "Information"]:
+        # 1. SCHREIB-VORGANG FÜR REGULÄRE INPUTS (Nutzt intern den extrahierten Aktionstyp)
+        if drive_service is not None and logischer_aktions_type in ["Störung", "Feedback", "Information"]:
             with st.spinner("Eintrag wird formatsicher in Excel protokolliert..."):
-                dynamic_write_to_excel(drive_service, prompt, nutzer_rolle, gewaehltes_objekt, st.session_state.aktive_aktion, df_lexikon)
+                dynamic_write_to_excel(drive_service, prompt, nutzer_rolle, gewaehltes_objekt, logischer_aktions_type, df_lexikon)
 
         # 2. MATRIX-FILTER & CONTEXT-EXTRAKTION
         if df_wissen is not None and not df_wissen.empty:
             df_gefiltert = df_wissen.copy()
-            bez_spalte = "Bezeichnung" if "Bezeichnung" in df_gefiltert.columns else df_gefiltert.columns[0]
-            kat_spalte = "Wo?" if "Wo?" in df_gefiltert.columns else df_gefiltert.columns[1]
-            
-            if gewaehltes_objekt and gewaehltes_objekt != "Nicht gefunden":
-                df_gefiltert = df_gefiltert[df_gefiltert[bez_spalte].astype(str).str.strip().str.lower() == str(gewaehltes_objekt).strip().lower()]
-            elif konkrete_auswahlen:
-                mask = pd.Series(False, index=df_gefiltert.index)
-                for kat in konkrete_auswahlen.keys():
-                    if "innen" in kat.lower(): mask = mask | df_gefiltert[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
-                    elif "außen" in kat.lower() or "aussen" in kat.lower(): mask = mask | df_gefiltert[kat_spalte].astype(str).str.contains("außen|aussen", case=False, na=False)
-                    elif "nähe" in kat.lower() or "naehe" in kat.lower(): mask = mask | df_gefiltert[kat_spalte].astype(str).str.contains("nähe|naehe|In der Nähe", case=False, na=False)
-                    else: mask = mask | df_gefiltert[kat_spalte].astype(str).str.contains(kat, case=False, na=False)
-                df_gefiltert = df_gefiltert[mask]
-                
-            if nutzer_rolle == "Gast":
-                if "Relevanz Gast" in df_gefiltert.columns:
-                    df_gefiltert = df_gefiltert[df_gefiltert["Relevanz Gast"].astype(str).str.strip().str.lower() == "x"]
-                if df_lexikon is not None and "Sichtbar für Gast" in df_lexikon.columns:
-                    erlaubt = df_lexikon[df_lexikon["Sichtbar für Gast"].astype(str).str.strip().str.lower() == "ja"]["Spaltenname"].tolist()
-                    erlaubte_spalten = [c for c in df_gefiltert.columns if str(c).strip() in erlaubt]
-                    df_gefiltert = df_gefiltert[erlaubte_spalten]
-
-            lexikon_text = ""
-            if df_lexikon is not None and not df_lexikon.empty:
-                lexikon_text = "REGELN FÜR SPALTEN (Spalten_Lexikon):\n"
-                for _, row in df_lexikon.iterrows():
-                    spaltenname = str(row.get("Spaltenname", ""))
-                    if spaltenname in df_gefiltert.columns:
-                        bedeutung = str(row.get("Bedeutung / Beschreibung", ""))
-                        format_regel = str(row.get("Erwartetes Format / Regel", ""))
-                        lexikon_text += f"- '{spaltenname}': {bedeutung} (Format: {format_regel})\n"
-
-            if df_gefiltert.empty: 
-                df_gefiltert = pd.DataFrame(["Keine passenden/freigegebenen Daten gefunden."])
-            kontext = f"\n\n{lexikon_text}\nAktuelle Daten aus der Wissensbasis:\n{df_gefiltert.to_string(index=False)}"
-        else:
-            kontext = ""
-        
-        with st.chat_message("assistant"):
-            with st.spinner("Villa Avatar überlegt..."):
-                antwort_text = generate_ki_response(
-                    f"Rolle: {nutzer_rolle}\nKontext-Aktion des Nutzers: {st.session_state.aktive_aktion}\n"
-                    f"Gewählte(s) HMI-Objekt(e): {gewaehlte_objekte_str}\nAnfrage: {prompt} {kontext}"
-                )
-            st.markdown(antwort_text)
-            st.session_state.messages.append({"role": "assistant", "content": antwort_text})
-
-        # 3. HIDDEN USE CASE LOGGING (Nachträgliches Schreiben bei fehlender Information)
-        if drive_service is not None and FALLBACK_SATZ.lower() in antwort_text.lower():
-            with st.spinner("Wissenslücke wird im Hintergrund dokumentiert..."):
-                if dynamic_write_to_excel(drive_service, prompt, nutzer_rolle, gewaehltes_objekt, "Keine Information", df_lexikon):
-                    df_wissen, df_lexikon, _ = load_dynamic_data()
+            bez_spalte = "Bezeichnung" if "Bezeichnung" in df_gefiltert.columns else df_gefiltert.
