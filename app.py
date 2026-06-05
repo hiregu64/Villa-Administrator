@@ -9,6 +9,7 @@ import io
 import datetime
 import openpyxl
 from openpyxl.styles import Font
+import json
 
 # ==========================================
 # CONFIGURATION & DRIVE INTERFACE
@@ -166,8 +167,32 @@ def generate_ki_response(prompt_text):
     except:
         return "🛑 KI temporär nicht erreichbar."
 
+def generate_ki_response_with_status(prompt_text):
+    if client is None: return "🛑 KI nicht konfiguriert.", False
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt_text,
+            config=types.GenerateContentConfig(
+                system_instruction=VILLA_PROMPT,
+                response_mime_type="application/json",
+                response_schema={
+                    "type": "OBJECT",
+                    "properties": {
+                        "antwort": {"type": "STRING"},
+                        "wissensluecke_erkannt": {"type": "BOOLEAN"}
+                    },
+                    "required": ["antwort", "wissensluecke_erkannt"]
+                }
+            )
+        )
+        res_data = json.loads(response.text)
+        return res_data.get("antwort", ""), res_data.get("wissensluecke_erkannt", False)
+    except:
+        return "🛑 Fehler bei der KI-Strukturverarbeitung.", False
+
 # ==========================================
-# HMI PRESENTATION LAYER (STRIKT GEMÄSS SCREENSHOT)
+# HMI PRESENTATION LAYER (STRIKT ASYMMETRISCH)
 # ==========================================
 st.markdown("""
     <style>
@@ -207,7 +232,7 @@ HMI_MATRIX = {
     "Host": {
         "Ich brauche Hilfe.": {"sys_action": "Hilfe", "reply": "Wobei kann ich dir helfen?", "dd": STANDARD_DROPDOWNS},
         "Ich habe neue Informationen.": {"sys_action": "Information", "reply": "Gern nehme ich deine Notizen auf und ordne sie zu.", "dd": STANDARD_DROPDOWNS},
-        "Ich benötige einen Bericht.": {"sys_action": "Bericht", "reply": "Nenne mir bitte den Zeitraum und das Thema.", "dd": []},
+        "Ich benötigt einen Bericht.": {"sys_action": "Bericht", "reply": "Nenne mir bitte den Zeitraum und das Thema.", "dd": []},
         "Ich möchte eine Störung melden.": {"sys_action": "Störung", "reply": "Was ist passiert? Ich halte es fest.", "dd": STANDARD_DROPDOWNS},
         "Ich möchte Feedback geben.": {"sys_action": "Feedback", "reply": "Welches Feedback dokumentieren wir?", "dd": STANDARD_DROPDOWNS}
     }
@@ -325,10 +350,8 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
             with st.spinner("Eintrag wird in Excel protokolliert..."):
                 dynamic_write_to_excel(drive_service, prompt, nutzer_rolle, gewaehltes_objekt, aktuelle_sys_action, df_lexikon)
 
-        # 2. DETERMINISTISCHE PRÜFUNG AUF WISSENSLÜCKEN
-        wissensluecke_erkannt = False
+        # 2. FILTERN DER DATEN & KONTEXT-AUFBEREITUNG
         kontext = ""
-        
         if df_wissen is not None and not df_wissen.empty:
             df_gefiltert = df_wissen.copy()
             bez_spalte = "Bezeichnung" if "Bezeichnung" in df_gefiltert.columns else df_gefiltert.columns[0]
@@ -351,22 +374,27 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
                     erlaubt = df_lexikon[df_lexikon["Sichtbar für Gast"].astype(str).str.strip().str.lower() == "ja"]["Spaltenname"].tolist()
                     df_gefiltert = df_gefiltert[[c for c in df_gefiltert.columns if str(c).strip() in erlaubt]]
 
-            if df_gefiltert.empty or df_gefiltert.dropna(how='all').empty or gewaehltes_objekt == "Nicht gefunden":
-                wissensluecke_erkannt = True
-            else:
-                lexikon_text = ""
-                if df_lexikon is not None and not df_lexikon.empty:
-                    for _, row in df_lexikon.iterrows():
-                        spaltenname = str(row.get("Spaltenname", ""))
-                        if spaltenname in df_gefiltert.columns:
-                            lexikon_text += f"- '{spaltenname}': {row.get('Bedeutung / Beschreibung', '')}\n"
-                kontext = f"\n\n{lexikon_text}\nAktuelle Daten aus der Wissensbasis:\n{df_gefiltert.to_string(index=False)}"
-        else:
-            wissensluecke_erkannt = True
-        
-        # 3. OUTPUT ENGINE
+            lexikon_text = ""
+            if df_lexikon is not None and not df_lexikon.empty:
+                for _, row in df_lexikon.iterrows():
+                    spaltenname = str(row.get("Spaltenname", ""))
+                    if spaltenname in df_gefiltert.columns:
+                        lexikon_text += f"- '{spaltenname}': {row.get('Bedeutung / Beschreibung', '')}\n"
+            
+            kontext = f"\n\n{lexikon_text}\nAktuelle Daten aus der Wissensbasis:\n{df_gefiltert.to_string(index=False)}"
+
+        # 3. OUTPUT ENGINE & STRUKTURIERTE WISSENSLÜCKEN-ERKENNUNG
         with st.chat_message("assistant"):
-            if wissensluecke_erkannt and aktuelle_sys_action in ["Hilfe", "Bericht"]:
+            with st.spinner("Villa Avatar überlegt..."):
+                if aktuelle_sys_action in ["Störung", "Feedback", "Information"]:
+                    ki_prompt = f"Bestätige dem {nutzer_rolle} kurz und höflich, dass sein Anliegen '{prompt}' bezüglich '{gewaehltes_objekt}' erfolgreich aufgezeichnet wurde."
+                    antwort_text = generate_ki_response(ki_prompt)
+                    ist_luecke = False
+                else:
+                    ki_prompt = f"Rolle: {nutzer_rolle}\nSystem-Aktion: {aktuelle_sys_action}\nGewählte(s) HMI-Objekt(e): {gewaehlte_objekte_str}\nAnfrage: {prompt}\nVerfügbare Kontext-Daten:\n{kontext}\nFalls die Frage anhand der Daten NICHT präzise beantwortet werden kann (z.B. Suche nach Arzt, der nicht existiert), setze wissensluecke_erkannt=true."
+                    antwort_text, ist_luecke = generate_ki_response_with_status(ki_prompt)
+            
+            if ist_luecke or gewaehltes_objekt == "Nicht gefunden":
                 st.markdown(FALLBACK_SATZ)
                 st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
                 
@@ -375,12 +403,5 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
                         dynamic_write_to_excel(drive_service, prompt, nutzer_rolle, gewaehltes_objekt, "Keine Information", df_lexikon)
                         st.cache_data.clear()
             else:
-                with st.spinner("Villa Avatar überlegt..."):
-                    if aktuelle_sys_action in ["Störung", "Feedback", "Information"]:
-                        ki_prompt = f"Bestätige dem {nutzer_rolle} kurz und höflich, dass sein Anliegen '{prompt}' bezüglich '{gewaehltes_objekt}' erfolgreich aufgezeichnet wurde."
-                    else:
-                        ki_prompt = f"Rolle: {nutzer_rolle}\nSystem-Aktion: {aktuelle_sys_action}\nGewählte(s) HMI-Objekt(e): {gewaehlte_objekte_str}\nAnfrage: {prompt} {kontext}"
-                    
-                    antwort_text = generate_ki_response(ki_prompt)
                 st.markdown(antwort_text)
                 st.session_state.messages.append({"role": "assistant", "content": antwort_text})
