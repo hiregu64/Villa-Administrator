@@ -1,6 +1,8 @@
 # Requirements & Systemarchitektur — Villa Asset Management App
 
-Dieses Dokument definiert die funktionalen Anforderungen, Datenstrukturen und Sicherheitsmechanismen für die KI-gestützte Asset-Management-Anwendung der Villa. Das System folgt strikt dem Prinzip **„Mensch zu Maschine“**: Die Excel-Datei im Google Drive ist die alleinige administrative Wahrheit; die Anwendung passt sich Änderungen dieser Datei vollständig dynamisch an.
+Dieses Dokument definiert die funktionalen Anforderungen, Datenstrukturen und Sicherheitsmechanismen für die KI-gestützte Asset-Management-Anwendung der Villa. Das System folgt strikt dem Prinzip **„Mensch zu Maschine“**: Die Excel-Datei im Google Drive ist die alleinige administrative Wahrheit; die Anwendung passt sich Änderungen dieser Datei vollständig dynamisch an. 
+
+**HINWEIS ZUR MASTER-LOGIK (Single Source of Truth):** Die logische Matrix der Präsentation (GEM) definiert die unumstößliche Struktur der Benutzeroberfläche und des Datenflusses. Bei Diskrepanzen zwischen textlichen Beschreibungen und dem GEM gilt das GEM als primäre Wahrheit.
 
 ---
 
@@ -37,33 +39,32 @@ Das System besitzt **keine** fest einprogrammierten Inhalts-Spalten. Das Datenmo
    * Wählt der Nutzer die Rolle **Gast**, wirft der Code im RAM alle Spalten heraus, die im Lexikon nicht explizit als `ja` deklariert sind.
 4. **Offline-Erweiterbarkeit:** Fügt der Admin offline eine neue Spalte in Tabelle 1 hinzu und pflegt sie in Tabelle 2 ein, wird sie von der App sofort ohne Code-Änderung berücksichtigt.
 
-*Ausnahme (System-Anker):* Die Spalten `Bezeichnung`, `Wo?`, `Relevanz Gast`, sowie die Input/Status-Felder für Störungen, Feedbacks und „Keine Information“ sind im Code namentlich hinterlegt, um die HMI-Eingabemasken und Kernfilter zu steuern.
+*Ausnahme (System-Anker):* Die Spalten `Bezeichnung`, `Wo?`, `Relevanz Gast`, sowie die Input/Status-Felder für Störungen, Feedbacks und „Keine Information“ (bzw. deren feldnahe Bezeichner wie `[Input]`) sind im Code namentlich hinterlegt, um die HMI-Eingabemasken und Kernfilter fehlertolerant zu steuern.
 
 ---
 
-## 4. HMI-Schnittstelle & Use Cases
+## 4. HMI-Schnittstelle & Use Cases (Abgestimmt auf GEM)
 
-Die Benutzeroberfläche (Streamlit HMI) verzichtet auf administrative Schaltflächen und unterscheidet strikt zwei Rollen:
+Die Benutzeroberfläche (Streamlit HMI) bietet ausschließlich voll ausformulierte Sätze als Interaktions-Buttons an. Es gibt keine separaten administrativen Schaltflächen oder Freitext-Buttons für System-Logs.
 
 ### Rolle: Gast
-* **Use Case 1: Ich brauche Hilfe / Frage stellen** -> KI-gestützte Beantwortung. Kontext ist streng zweidimensional gefiltert (nur Zeilen mit `x`, nur Spalten mit `ja`).
-* **Use Case 2: Eine Störung melden** -> Freitextfeld. Der Eintrag wird per Append-Logik in die Spalte `Störung [Input]` geschrieben. Der `Störung Status` wird automatisch auf `aktiv` gesetzt.
-* **Use Case 3: Feedback geben** -> Freitextfeld. Eintrag wird per Append-Logik in `Feedback [Input]` geschrieben; `Feedback Status` wird auf `offen` gesetzt.
-* **Use Case 4: Unbeantwortete Fragen / Keine Information** -> Eintrag wird per Append-Logik in `Keine Information` geschrieben und der Status auf `offen` gesetzt.
+* **Use Case 1: „Ich brauche Hilfe.“** -> KI-gestützte Beantwortung von Fragen zur Villa. Kontext ist streng zweidimensional gefiltert (nur Zeilen mit `x`, nur Spalten mit `ja`).
+* **Use Case 2: „Ich möchte eine Störung melden.“** -> Öffnet das HMI-Eingabefeld. Der Eintrag wird per Append-Logik in die Spalte `Störung` geschrieben. Der `Störung Status` wird im Hintergrund automatisch auf `aktiv` gesetzt.
+* **Use Case 3: „Ich möchte Feedback geben.“** -> Öffnet das HMI-Eingabefeld. Eintrag wird per Append-Logik in `Feedback` geschrieben; `Feedback Status` wird auf `offen` gesetzt.
+* **Hidden Use Case: Automatische Protokollierung bei Wissenslücken** -> Es existiert *kein* sichtbarer Button für den Gast. Wenn der Gast eine Frage über den Hilfe-Button stellt und die KI mangels Daten mit dem festen Fallback-Satz antwortet, routet das System den Prompt automatisch als Input in die Excel-Spalte `Keine Information` und setzt den zugehörigen Status auf `offen`.
 
 ### Rolle: Host
-* **Use Case 1: Ich brauche Hilfe / Frage stellen** -> KI-Zugriff auf die gesamte Matrix (alle Zeilen, alle Spalten).
-* **Use Case 2: Neue Informationen eintragen** -> Ermöglicht das Anhängen von operativen Notizen an bestehende Objekte (Append-Logik).
-* **Use Case 3: Störung melden / verwalten** -> Kann Störungen melden oder den Status einsehen.
-* **Use Case 4: Feedback erfassen** -> Dokumentation von Feedback im System.
-* **Use Case 5: Unbeantwortete Fragen protokollieren** -> Festhalten von Wissenslücken aus Gastgesprächen.
-* **Use Case 6: Bericht generieren** -> Die KI analysiert periodische Daten (z. B. alle aktiven Störungen, offene Feedbacks oder ungelöste Fragen) und erstellt eine strukturierte Zusammenfassung für den Host.
+* **Use Case 1: „Ich brauche Hilfe.“** -> KI-Zugriff auf die gesamte Matrix (alle Zeilen, alle Spalten) für administrative Fragen.
+* **Use Case 2: „Ich habe neue Informationen.“** -> Ermöglicht das Anhängen von operativen Notizen an bestehende Objekte (Append-Logik). Ein KI-Classifier ordnet die Information automatisch der passenden Stammdaten-Zielspalte zu.
+* **Use Case 3: „Ich möchte eine Störung melden.“** -> Dokumentation und Erfassung von Systemausfällen.
+* **Use Case 4: „Ich möchte Feedback geben.“** -> Direktes Abspeichern von Feedback-Einträgen im System.
+* **Use Case 5: „Ich benötige einen Bericht.“** -> Die KI analysiert periodische Daten (z. B. alle aktiven Störungen, offene Feedbacks oder ungelöste Fragen) und erstellt eine strukturierte Zusammenfassung für den Host direkt im Chatfenster.
 
 ---
 
 ## 5. Technische Implementierungs-Vorgaben
 
-* **Dynamische Spalten-Findung:** Im Code dürfen keine statischen Spaltenindizes verwendet werden (z. B. nicht `col=11`). Die App sucht die Spaltennummern beim Start dynamisch über die Namen aus der Header-Zeile.
-* **Append-Logik bei Eingaben:** Bestehende Zellinhalte in den Input-Spalten (`Störung`, `Feedback`, `Keine Information`) dürfen *niemals* überschrieben werden. Neue Einträge werden chronologisch mit Zeitstempel und Rolle angehängt (z. B. `\n[05.06.2026 - Gast]: Text`).
+* **Dynamische Spalten-Findung & Fuzzy-Matching:** Im Code dürfen keine statischen Spaltenindizes verwendet werden. Da Spaltennamen in der Praxis variieren können (z. B. `Störung` vs. `Störung [Input]`), muss die Anwendung ein automatisiertes, fehlertolerantes String-Matching (Fuzzy-Matching) anwenden, um die korrekten Zielspalten anhand der Header-Zeile zu ermitteln. Schlägt dies fehl, muss eine klare Fehlermeldung im UI ausgegeben werden.
+* **Append-Logik bei Eingaben:** Bestehende Zellinhalte in den Input-Spalten (`Störung`, `Feedback`, `Keine Information`) dürfen *niemals* überschrieben werden. Neue Einträge werden chronologisch mit Zeitstempel und Rolle angehängt (z. B. `\n- [05.06.2026 | Gast]: Text`).
 * **KI-Sicherheitsnetz (Fallback):** Anfragen werden primär an `gemini-2.5-flash` gestellt. Bei Überlastung oder Quoten-Limits fängt der Code den Fehler ab und schaltet automatisch auf `gemini-2.0-flash` um.
-* **Token-Spargang:** Um API-Quoten zu schonen, wird der KI nicht immer die gesamte Tabelle übergeben. Über Dropdowns (z. B. Bereichsauswahl „Wo?“) wird der Tabellen-Kontext für die KI vorab gefiltert.
+* **Token-Spargang:** Um API-Quoten zu schonen, wird der KI nicht immer die gesamte Tabelle übergeben. Über Dropdowns (Bereichsauswahl „Wo?“) wird der Tabellen-Kontext für die KI vorab gefiltert.
