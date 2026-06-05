@@ -143,6 +143,7 @@ def dynamic_write_to_excel(service, text, nutzername, objekt_name, system_action
 # ==========================================
 VILLA_PROMPT = """Du bist „Villa Avatar“, der digitale Helfer für die Gäste (Gast), Gastgeber (Host) und Administratoren (Admin) der Villa. 
 Antworte immer kurz, freundlich, präzise und smartphone-optimiert. Beziehe dich exakt auf die mitgegebenen Live-Daten. 
+Falls im Kontext keine Daten vorhanden sind oder eine Wissenslücke vorliegt, erfinde NIEMALS Fakten.
 ABSOLUTES VERBOT: Erwähne NIEMALS interne Dateinamen, Spaltenbezeichnungen oder Excel-Strukturen."""
 
 @st.cache_resource
@@ -166,30 +167,6 @@ def generate_ki_response(prompt_text):
         return client.models.generate_content(model="gemini-2.5-flash", contents=prompt_text, config=types.GenerateContentConfig(system_instruction=VILLA_PROMPT)).text
     except:
         return "🛑 KI temporär nicht erreichbar."
-
-def generate_ki_response_with_status(prompt_text):
-    if client is None: return "🛑 KI nicht konfiguriert.", False
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt_text,
-            config=types.GenerateContentConfig(
-                system_instruction=VILLA_PROMPT,
-                response_mime_type="application/json",
-                response_schema={
-                    "type": "OBJECT",
-                    "properties": {
-                        "antwort": {"type": "STRING"},
-                        "wissensluecke_erkannt": {"type": "BOOLEAN"}
-                    },
-                    "required": ["antwort", "wissensluecke_erkannt"]
-                }
-            )
-        )
-        res_data = json.loads(response.text)
-        return res_data.get("antwort", ""), res_data.get("wissensluecke_erkannt", False)
-    except:
-        return "🛑 Fehler bei der KI-Strukturverarbeitung.", False
 
 # ==========================================
 # HMI PRESENTATION LAYER (STRIKT ASYMMETRISCH)
@@ -344,64 +321,90 @@ if prompt := st.chat_input("Bitte schreibe hier oder sprich mit mir 🎙️"):
         
         gewaehlte_objekte_str = ", ".join([f"{k}: {v}" for k, v in konkrete_auswahlen.items()]) if konkrete_auswahlen else "Keines ausgewählt"
         gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if konkrete_auswahlen else None
-        
-        # 1. Transaktions-Szenarien direkt schreiben
-        if drive_service is not None and aktuelle_sys_action in ["Störung", "Feedback", "Information"]:
-            with st.spinner("Eintrag wird in Excel protokolliert..."):
-                dynamic_write_to_excel(drive_service, prompt, nutzer_rolle, gewaehltes_objekt, aktuelle_sys_action, df_lexikon)
 
-        # 2. FILTERN DER DATEN & KONTEXT-AUFBEREITUNG
-        kontext = ""
-        if df_wissen is not None and not df_wissen.empty:
-            df_gefiltert = df_wissen.copy()
-            bez_spalte = "Bezeichnung" if "Bezeichnung" in df_gefiltert.columns else df_gefiltert.columns[0]
-            kat_spalte = "Wo?" if "Wo?" in df_gefiltert.columns else df_gefiltert.columns[1]
-            
-            if gewaehltes_objekt and gewaehltes_objekt != "Nicht gefunden":
-                df_gefiltert = df_gefiltert[df_gefiltert[bez_spalte].astype(str).str.strip().str.lower() == str(gewaehltes_objekt).strip().lower()]
-            elif konkrete_auswahlen:
-                mask = pd.Series(False, index=df_gefiltert.index)
-                for kat in konkrete_auswahlen.keys():
-                    if "innen" in kat.lower(): mask = mask | df_gefiltert[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
-                    elif "außen" in kat.lower() or "aussen" in kat.lower(): mask = mask | df_gefiltert[kat_spalte].astype(str).str.contains("außen|aussen", case=False, na=False)
-                    else: mask = mask | df_gefiltert[kat_spalte].astype(str).str.contains("nähe|naehe|In der Nähe", case=False, na=False)
-                df_gefiltert = df_gefiltert[mask]
-                
-            if nutzer_rolle == "Gast":
-                if "Relevanz Gast" in df_gefiltert.columns:
-                    df_gefiltert = df_gefiltert[df_gefiltert["Relevanz Gast"].astype(str).str.strip().str.lower() == "x"]
-                if df_lexikon is not None and "Sichtbar für Gast" in df_lexikon.columns:
-                    erlaubt = df_lexikon[df_lexikon["Sichtbar für Gast"].astype(str).str.strip().str.lower() == "ja"]["Spaltenname"].tolist()
-                    df_gefiltert = df_gefiltert[[c for c in df_gefiltert.columns if str(c).strip() in erlaubt]]
-
-            lexikon_text = ""
-            if df_lexikon is not None and not df_lexikon.empty:
-                for _, row in df_lexikon.iterrows():
-                    spaltenname = str(row.get("Spaltenname", ""))
-                    if spaltenname in df_gefiltert.columns:
-                        lexikon_text += f"- '{spaltenname}': {row.get('Bedeutung / Beschreibung', '')}\n"
-            
-            kontext = f"\n\n{lexikon_text}\nAktuelle Daten aus der Wissensbasis:\n{df_gefiltert.to_string(index=False)}"
-
-        # 3. OUTPUT ENGINE & STRUKTURIERTE WISSENSLÜCKEN-ERKENNUNG
-        with st.chat_message("assistant"):
-            with st.spinner("Villa Avatar überlegt..."):
-                if aktuelle_sys_action in ["Störung", "Feedback", "Information"]:
-                    ki_prompt = f"Bestätige dem {nutzer_rolle} kurz und höflich, dass sein Anliegen '{prompt}' bezüglich '{gewaehltes_objekt}' erfolgreich aufgezeichnet wurde."
+        # ======================================================================
+        # PFAD A: REINE INPUT-SZENARIEN (Störung, Feedback, Information)
+        # Gemäß PPT: Strikter Input in die Wissensbasis, KEINE inhaltliche Suche.
+        # ======================================================================
+        if aktuelle_sys_action in ["Störung", "Feedback", "Information"]:
+            with st.chat_message("assistant"):
+                with st.spinner("Villa Avatar überlegt..."):
+                    ki_prompt = (
+                        f"Bestätige dem {nutzer_rolle} kurz, höflich und smartphone-optimiert, dass sein "
+                        f"Input '{prompt}' bezüglich '{gewaehlte_objekte_str}' erfolgreich in der Wissensbasis "
+                        f"registriert wurde. Erteile ausdrücklich KEINE inhaltlichen Ratschläge oder Erklärungen."
+                    )
                     antwort_text = generate_ki_response(ki_prompt)
-                    ist_luecke = False
-                else:
-                    ki_prompt = f"Rolle: {nutzer_rolle}\nSystem-Aktion: {aktuelle_sys_action}\nGewählte(s) HMI-Objekt(e): {gewaehlte_objekte_str}\nAnfrage: {prompt}\nVerfügbare Kontext-Daten:\n{kontext}\nFalls die Frage anhand der Daten NICHT präzise beantwortet werden kann (z.B. Suche nach Arzt, der nicht existiert), setze wissensluecke_erkannt=true."
-                    antwort_text, ist_luecke = generate_ki_response_with_status(ki_prompt)
-            
-            if ist_luecke or gewaehltes_objekt == "Nicht gefunden":
-                st.markdown(FALLBACK_SATZ)
-                st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
                 
-                if drive_service is not None:
-                    with st.spinner("Wissenslücke wird im Hintergrund dokumentiert..."):
-                        dynamic_write_to_excel(drive_service, prompt, nutzer_rolle, gewaehltes_objekt, "Keine Information", df_lexikon)
-                        st.cache_data.clear()
-            else:
                 st.markdown(antwort_text)
                 st.session_state.messages.append({"role": "assistant", "content": antwort_text})
+                
+                if drive_service is not None:
+                    with st.spinner("Eintrag wird in Excel protokolliert..."):
+                        dynamic_write_to_excel(drive_service, prompt, nutzer_rolle, gewaehltes_objekt, aktuelle_sys_action, df_lexikon)
+                        st.cache_data.clear()
+
+        # ======================================================================
+        # PFAD B: SUCH-SZENARIEN (Hilfe, Bericht)
+        # Inhaltliche Auswertung der Wissensbasis mit automatischem Lücken-Input.
+        # ======================================================================
+        else:
+            kontext = ""
+            wissensluecke_erkannt = False
+            
+            if df_wissen is not None and not df_wissen.empty:
+                df_gefiltert = df_wissen.copy()
+                bez_spalte = "Bezeichnung" if "Bezeichnung" in df_gefiltert.columns else df_gefiltert.columns[0]
+                kat_spalte = "Wo?" if "Wo?" in df_gefiltert.columns else df_gefiltert.columns[1]
+                
+                if gewaehltes_objekt and gewaehltes_objekt != "Nicht gefunden":
+                    df_gefiltert = df_gefiltert[df_gefiltert[bez_spalte].astype(str).str.strip().str.lower() == str(gewaehltes_objekt).strip().lower()]
+                elif konkrete_auswahlen:
+                    mask = pd.Series(False, index=df_gefiltert.index)
+                    for kat in konkrete_auswahlen.keys():
+                        if "innen" in kat.lower(): mask = mask | df_gefiltert[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
+                        elif "außen" in kat.lower() or "aussen" in kat.lower(): mask = mask | df_gefiltert[kat_spalte].astype(str).str.contains("außen|aussen", case=False, na=False)
+                        else: mask = mask | df_gefiltert[kat_spalte].astype(str).str.contains("nähe|naehe|In der Nähe", case=False, na=False)
+                    df_gefiltert = df_gefiltert[mask]
+                    
+                if nutzer_rolle == "Gast":
+                    if "Relevanz Gast" in df_gefiltert.columns:
+                        df_gefiltert = df_gefiltert[df_gefiltert["Relevanz Gast"].astype(str).str.strip().str.lower() == "x"]
+                    if df_lexikon is not None and "Sichtbar für Gast" in df_lexikon.columns:
+                        erlaubt = df_lexikon[df_lexikon["Sichtbar für Gast"].astype(str).str.strip().str.lower() == "ja"]["Spaltenname"].tolist()
+                        df_gefiltert = df_gefiltert[[c for c in df_gefiltert.columns if str(c).strip() in erlaubt]]
+
+                # Deterministischer Wortabgleich gegen Halluzinationen (z.B. Suche nach "Arzt")
+                gesamter_daten_text = df_gefiltert.to_string().lower()
+                such_woerter = [w.strip().lower() for w in prompt.split() if len(w.strip()) > 3]
+                
+                if such_woerter and not any(w in gesamter_daten_text for w in such_woerter):
+                    wissensluecke_erkannt = True
+
+                lexikon_text = ""
+                if df_lexikon is not None and not df_lexikon.empty:
+                    for _, row in df_lexikon.iterrows():
+                        spaltenname = str(row.get("Spaltenname", ""))
+                        if spaltenname in df_gefiltert.columns:
+                            lexikon_text += f"- '{spaltenname}': {row.get('Bedeutung / Beschreibung', '')}\n"
+                
+                kontext = f"\n\n{lexikon_text}\nAktuelle Daten aus der Wissensbasis:\n{df_gefiltert.to_string(index=False)}"
+            else:
+                wissensluecke_erkannt = True
+
+            with st.chat_message("assistant"):
+                if wissensluecke_erkannt or gewaehltes_objekt == "Nicht gefunden":
+                    st.markdown(FALLBACK_SATZ)
+                    st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
+                    
+                    if drive_service is not None:
+                        with st.spinner("Wissenslücke wird unter 'Keine Information' dokumentiert..."):
+                            dynamic_write_to_excel(drive_service, prompt, nutzer_rolle, gewaehltes_objekt, "Keine Information", df_lexikon)
+                            st.cache_data.clear()
+                else:
+                    with st.spinner("Villa Avatar überlegt..."):
+                        ki_prompt = f"Rolle: {nutzer_rolle}\nSystem-Aktion: {aktuelle_sys_action}\nGewählte(s) HMI-Objekt(e): {gewaehlte_objekte_str}\nAnfrage: {prompt}\nVerfügbare Kontext-Daten:\n{kontext}"
+                        antwort_text = generate_ki_response(ki_prompt)
+                    
+                    st.markdown(antwort_text)
+                    st.session_state.messages.append({"role": "assistant", "content": antwort_text})
