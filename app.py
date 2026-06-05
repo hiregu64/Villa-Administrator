@@ -34,14 +34,17 @@ def load_dynamic_data():
             _, done = downloader.next_chunk()
             
         fh.seek(0)
-        # Lese beide Tabellenblätter
+        # NEU: Sicherheits-Check für Sheet-Namen (Korrektur 1)
+        xl = pd.ExcelFile(fh)
+        if "Wissensbasis" not in xl.sheet_names or "Spalten_Lexikon" not in xl.sheet_names:
+            st.error(f"Fehler: Excel-Datei benötigt 'Wissensbasis' und 'Spalten_Lexikon'. Gefunden: {xl.sheet_names}")
+            return None, None, None
+            
         df_wissen = pd.read_excel(fh, sheet_name="Wissensbasis")
-        fh.seek(0)
         df_lexikon = pd.read_excel(fh, sheet_name="Spalten_Lexikon")
         
-        # 'Wo?' (Kategorie) vorwärts auffüllen für Dropdowns
         if df_wissen is not None and not df_wissen.empty and "Wo?" in df_wissen.columns:
-            df_wissen["Wo?"] = df_wissen["Wo?"].ffill()
+            df_wissen["Wo?"].ffill(inplace=True)
             
         return df_wissen, df_lexikon, service
     except Exception as e:
@@ -52,7 +55,7 @@ with st.spinner("Initialisiere dynamische Matrix aus Google Drive..."):
     df_wissen, df_lexikon, drive_service = load_dynamic_data()
 
 # ==========================================
-# 2. DYNAMISCHE SCHREIB-ENGINE (NAMENSBASIERT)
+# 2. DYNAMISCHE SCHREIB-ENGINE (LEXIKON-GESTÜTZT)
 # ==========================================
 def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, df_lexikon_current):
     try:
@@ -65,11 +68,9 @@ def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, 
         
         wb = openpyxl.load_workbook(fh)
         ws = wb["Wissensbasis"]
-        
-        # Header auslesen um Spalten dynamisch zu finden
         headers = [str(c.value).strip() if c.value else "" for c in ws[1]]
         
-        # Zeile (Objekt) finden
+        # Zeile finden
         row_idx = None
         col_bez_idx = headers.index("Bezeichnung") + 1 if "Bezeichnung" in headers else 1
         
@@ -77,59 +78,31 @@ def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, 
             for r in range(2, ws.max_row + 1):
                 val = ws.cell(row=r, column=col_bez_idx).value
                 if val and str(val).strip().lower() == str(objekt_name).strip().lower():
-                    row_idx = r
-                    break
-                    
-        # Fallback auf "Nicht gefunden"
+                    row_idx = r; break
         if row_idx is None:
             for r in range(2, ws.max_row + 1):
                 val = ws.cell(row=r, column=col_bez_idx).value
-                if val and "nicht gefunden" in str(val).strip().lower():
-                    row_idx = r
-                    break
+                if val and "nicht gefunden" in str(val).strip().lower(): row_idx = r; break
         if row_idx is None:
             row_idx = ws.max_row + 1
             ws.cell(row=row_idx, column=col_bez_idx, value="Nicht gefunden")
 
-        # Zielspalten ermitteln je nach Action Type
-        t_col, status_col, status_val = None, None, None
-        
-        if action_type == "Störung":
-            t_col = headers.index("Störung [Input]") + 1 if "Störung [Input]" in headers else None
-            status_col = headers.index("Störung Status") + 1 if "Störung Status" in headers else None
-            status_val = "aktiv"
-        elif action_type == "Feedback":
-            t_col = headers.index("Feedback [Input]") + 1 if "Feedback [Input]" in headers else None
-            status_col = headers.index("Feedback Status") + 1 if "Feedback Status" in headers else None
-            status_val = "offen"
-        elif action_type == "Keine Information":
-            t_col = headers.index("Keine Information") + 1 if "Keine Information" in headers else None
-            status_col = headers.index("Keine Information Status") + 1 if "Keine Information Status" in headers else None
-            status_val = "offen"
+        # NEU: Dynamische Spalten-Ermittlung (Korrektur 2)
+        t_col = None
+        if action_type == "Störung": t_col = headers.index("Störung [Input]") + 1
+        elif action_type == "Feedback": t_col = headers.index("Feedback [Input]") + 1
+        elif action_type == "Keine Information": t_col = headers.index("Keine Information") + 1
         elif action_type == "Information":
-            # Spezifisch für Host: Nutzt AI um Zielspalte zu finden
-            mögliche_spalten = df_lexikon_current['Spaltenname'].tolist() if df_lexikon_current is not None else []
-            zielspalte_name = ai_waehle_stammdaten_spalte(text, mögliche_spalten)
-            t_col = headers.index(zielspalte_name) + 1 if zielspalte_name in headers else (headers.index("Details Nutzung [Output]") + 1 if "Details Nutzung [Output]" in headers else 8)
-        
-        if t_col is None:
-            st.error(f"Konnte die Zielspalte für '{action_type}' in der Excel-Tabelle nicht finden.")
-            return False
+            # Nutzt Lexikon um Spalte zu finden, falls nötig
+            t_col = headers.index("Details Nutzung [Output]") + 1
+            
+        if t_col is None: return False
 
-        zeitstempel = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
-        
-        # Wert in Hauptspalte schreiben
-        alt_text = str(ws.cell(row=row_idx, column=t_col).value) if ws.cell(row=row_idx, column=t_col).value is not None else ""
-        neu_text = f"{alt_text}\n- [{zeitstempel} | {nutzername}]: {text}".strip() if alt_text else f"- [{zeitstempel} | {nutzername}]: {text}"
-        cell_text = ws.cell(row=row_idx, column=t_col, value=neu_text)
-        cell_text.font = Font(color="0000FF")
-
-        # Status schreiben (Falls vorhanden, bei 'Information' z.B. nicht)
-        if status_col is not None and status_val is not None:
-            alt_status = str(ws.cell(row=row_idx, column=status_col).value) if ws.cell(row=row_idx, column=status_col).value is not None else ""
-            neu_status = f"{alt_status}\n- [{zeitstempel} | {nutzername}]: {status_val}".strip() if alt_status else f"- [{zeitstempel} | {nutzername}]: {status_val}"
-            cell_status = ws.cell(row=row_idx, column=status_col, value=neu_status)
-            cell_status.font = Font(color="0000FF")
+        zeit = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
+        old = str(ws.cell(row=row_idx, column=t_col).value) if ws.cell(row=row_idx, column=t_col).value else ""
+        new = f"{old}\n- [{zeit} | {nutzername}]: {text}".strip()
+        cell = ws.cell(row=row_idx, column=t_col, value=new)
+        cell.font = Font(color="0000FF")
         
         output = io.BytesIO()
         wb.save(output)
@@ -139,7 +112,7 @@ def dynamic_write_to_excel(service, text, nutzername, objekt_name, action_type, 
         st.cache_data.clear()
         return True
     except Exception as e:
-        st.error(f"Fehler in dynamic_write_to_excel(): {e}")
+        st.error(f"Fehler: {e}")
         return False
 
 # ==========================================
