@@ -428,7 +428,6 @@ if prompt or bericht_trigger:
                 key = f"sub_cat_wahl_{kat}_{st.session_state.aktive_aktion}"
                 if key in st.session_state and st.session_state[key] is not None:
                     konkrete_auswahlen[kat] = st.session_state[key]
-            gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if intrauterine_device_wahl_ else None # Fallback-Sicherheit
             gewaehltes_objekt = list(konkrete_auswahlen.values())[0] if konkrete_auswahlen else None
 
             kontext = ""
@@ -444,7 +443,7 @@ if prompt or bericht_trigger:
                 # Szenario a: Konkretes Item gewählt
                 if gewaehltes_objekt and gewaehltes_objekt != "Nicht gefunden":
                     df_gefiltert = df_gefiltert[df_gefiltert[bez_spalte].astype(str).str.strip().str.lower() == str(gewaehltes_objekt).strip().lower()]
-                # Szenario b & c: "Nicht gefunden" oder leere Auswahl -> Offene Tabellensuche
+                # Szenario b & c: "Nicht gefunden" or leere Auswahl -> Offene Tabellensuche
                 elif konkrete_auswahlen:
                     mask = pd.Series(False, index=df_gefiltert.index)
                     for kat in konkrete_auswahlen.keys():
