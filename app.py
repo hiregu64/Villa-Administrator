@@ -20,7 +20,7 @@ FILE_ID = '1FzhWZuO6aRZkdRuQBzaojhkq7bQDyprl'
 FALLBACK_SATZ = "Ich habe dazu leider keine Informationen, Ich gebe das aber gern an die Hosts weiter."
 
 # ==============================================================================
-# DATEN-LADE ENGINE (Drei-Blatt-Modell mit header=1)
+# DATEN-LADE ENGINE (Drei-Blatt-Modell mit header=1 wegen leerer Zeile 1)
 # ==============================================================================
 @st.cache_data(ttl=30)
 def load_dynamic_data():
@@ -36,7 +36,7 @@ def load_dynamic_data():
         while done is False: _, done = downloader.next_chunk()
             
         fh.seek(0)
-        # 🚨 PRO-MODUS ANKER: header=1 zwingt Pandas, Zeile 1 zu ignorieren
+        # 🚨 PRO-MODUS ANKER: header=1 zwingt Pandas, Zeile 1 komplett zu ignorieren
         df_wissen = pd.read_excel(fh, sheet_name="Wissensbasis", header=1)
         fh.seek(0)
         df_lexikon = pd.read_excel(fh, sheet_name="Spalten_Lexikon", header=1)
@@ -92,7 +92,7 @@ def extract_context_for_object(objekt_name):
     if row_match.empty: return ""
     
     lex_spalten_name = df_lexikon.columns[0]
-    rolle_idx = 2 if st.session_state.aktive_rolle == "Gast" else 3 # Spalte C für Gast, D für Host
+    rolle_idx = 2 if st.session_state.aktive_rolle == "Gast" else 3 
     lex_rollen_freigabe = df_lexikon.columns[rolle_idx]
     
     freigegebene_tags = df_lexikon[df_lexikon[lex_rollen_freigabe].astype(str).str.lower().str.strip() == "ja"][lex_spalten_name].tolist()
@@ -111,7 +111,7 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
     try:
         ziel_objekt = "Nicht gefunden" if (objekt_name is None or objekt_name == "Nicht gefunden") else objekt_name
         
-        # Lexikon-API: Spalte E (Index 4) liefert das Tagging
+        # Spalten_Lexikon: Spalte E (Index 4) liefert das funktionale HMI-Tagging
         tag_col_name = df_lexikon.columns[4]
         lex_spalten_name = df_lexikon.columns[0]
         
@@ -132,7 +132,7 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
         wb = openpyxl.load_workbook(fh)
         ws = wb["Wissensbasis"]
         
-        # Zeilenfindung ab Zeile 3 (Zeile 2 ist Header)
+        # Zeilenfindung ab Zeile 3 (Zeile 2 hält die Header)
         ziel_row_idx = None
         for row in range(3, ws.max_row + 1):
             cell_val = ws.cell(row=row, column=1).value
@@ -152,9 +152,9 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
                 ziel_col_idx = col
                 break
                 
-        if not ziel_col_idx: return # Spalte existiert physisch nicht
+        if not ziel_col_idx: return 
             
-        # Chronologisches Anhängen & Formatierung (Schreiben in Blau: 1F4E78)
+        # Chronologischer Append-Workflow & Formatierung (Schreiben in Blau: #1F4E78)
         zeitstempel = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
         nutzer = st.session_state.aktive_rolle
         alter_inhalt = ws.cell(row=ziel_row_idx, column=ziel_col_idx).value or ""
@@ -167,7 +167,7 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
         ziel_zelle.font = Font(color="1F4E78")
         ziel_zelle.alignment = Alignment(wrap_text=True)
         
-        # Status-Handling (Suche nach "... Status" Spalte in Zeile 2)
+        # Automatisches Status-Handling (Suche nach "... Status" Spalte in Zeile 2)
         status_col_name = f"{physische_zielspalte} Status"
         for col in range(1, ws.max_column + 1):
             header_val = ws.cell(row=2, column=col).value
@@ -227,8 +227,12 @@ def generate_raw_report_context(filter_type):
                     
     return "\n".join(report_lines) if report_lines else "Keine passenden Einträge gefunden."
 
+# Callback für Dropdowns, um Kaskadenfehler und Loops zu verhindern
+def reset_chat_flow():
+    st.session_state.messages = []
+
 # ==============================================================================
-# HMI PRESENTATION LAYER (Asymmetrisches Design & Kaskaden)
+# HMI PRESENTATION LAYER (Native Integration & Asymmetrie)
 # ==============================================================================
 st.markdown("""
     <style>
@@ -250,7 +254,7 @@ if "aktiver_use_case" not in st.session_state: st.session_state.aktiver_use_case
 if "messages" not in st.session_state: st.session_state.messages = []
 if "bericht_filter" not in st.session_state: st.session_state.bericht_filter = None
 
-# KASKADE 1: Rolle
+# KASKADE 1: Rollen-Wechsel
 neue_rolle = st.selectbox("Rolle", options=["Gast", "Host"], index=None, placeholder="Wer bist du?", label_visibility="collapsed")
 if neue_rolle != st.session_state.aktive_rolle:
     st.session_state.aktive_rolle = neue_rolle
@@ -270,7 +274,6 @@ if st.session_state.aktive_rolle and df_usecases is not None:
     dir_col = df_usecases.columns[1]
     hmi_col = df_usecases.columns[2]
     
-    # HMI Filter
     mask_sichtbar = df_usecases[hmi_col].astype(str).str.lower().str.strip() == "ja"
     verfuegbare_uc = df_usecases[mask_sichtbar][uc_col].tolist()
     
@@ -342,13 +345,9 @@ if st.session_state.aktive_rolle and df_usecases is not None:
                         verfuegbare_bez.append("Nicht gefunden")
                         
                         dp_key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
-                        alter_wert = st.session_state.get(dp_key, None)
                         
-                        gewaehltes_objekt = st.selectbox(label=f"hidden_{kat}", options=verfuegbare_bez, index=None, placeholder=f"🔎 {kat} wählen...", key=dp_key, label_visibility="collapsed")
-                        
-                        if gewaehltes_objekt != alter_wert:
-                            st.session_state.messages = []
-                            st.rerun()
+                        # Sichere Kaskadensteuerung über on_change Callback
+                        st.selectbox(label=f"hidden_{kat}", options=verfuegbare_bez, index=None, placeholder=f"🔎 {kat} wählen...", key=dp_key, on_change=reset_chat_flow, label_visibility="collapsed")
                             
                     for kat in STANDARD_DROPDOWNS:
                         val = st.session_state.get(f"dropdown_{kat}_{st.session_state.aktiver_use_case}")
@@ -359,55 +358,57 @@ if st.session_state.aktive_rolle and df_usecases is not None:
 # ==============================================================================
 # CHAT & PROCESSING LAYER (Datenflüsse & Transitional Routing)
 # ==============================================================================
+# 🚨 EXECUTE REPORT-GENERATION: Durchbricht die Endlosschleife zuverlässig
+if st.session_state.aktiver_use_case and "bericht" in st.session_state.aktiver_use_case.lower() and st.session_state.bericht_filter:
+    with st.spinner("Analysiere Datenbasis..."):
+        report_data_str = generate_raw_report_context(st.session_state.bericht_filter)
+        if "Keine passenden Einträge" in report_data_str:
+            report_output = f"Aktuell liegen keine Einträge für den Filter '{st.session_state.bericht_filter}' vor. ☀️"
+        else:
+            prompt = f"Du bist der administrative Analyst. Strukturiere diese Matrix-Daten professionell und chronologisch für den Host:\n\n{report_data_str}"
+            report_output = call_gemini_api(prompt, system_context="Liste Fakten auf, nutze Bulletpoints, bleibe sachlich.")
+        
+        st.session_state.messages.append({"role": "assistant", "content": report_output})
+        # ⚡ LOOP-BREAKER: Filter zwingend zurücksetzen vor dem Rerun!
+        st.session_state.bericht_filter = None
+        st.rerun()
+
 st.write("---")
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
-if st.session_state.aktiver_use_case:
+if st.session_state.aktiver_use_case and "bericht" not in st.session_state.aktiver_use_case.lower():
+    if user_input := st.chat_input("Wie kann ich dir helfen?"):
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        st.rerun()
+
+# Logikverarbeitung direkt nach State-Eingabe (Verhindert asynchrone Sprünge)
+if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+    user_input = st.session_state.messages[-1]["content"]
     
-    # Pfad C: Bericht anfordern
-    if "bericht" in st.session_state.aktiver_use_case.lower():
-        if st.session_state.bericht_filter:
-            with st.spinner("Analysiere Datenbasis..."):
-                report_data_str = generate_raw_report_context(st.session_state.bericht_filter)
-                if "Keine passenden Einträge" in report_data_str:
-                    report_output = f"Aktuell liegen keine Einträge für den Filter '{st.session_state.bericht_filter}' vor. ☀️"
-                else:
-                    prompt = f"Du bist der administrative Analyst. Strukturiere diese Matrix-Daten professionell und chronologisch für den Host:\n\n{report_data_str}"
-                    report_output = call_gemini_api(prompt, system_context="Liste Fakten auf, nutze Bulletpoints, bleibe sachlich.")
-                
-                st.session_state.messages.append({"role": "assistant", "content": report_output})
+    # OUTPUT-PFAD (Suchen & Finden)
+    if aktuelle_richtung == "OUTPUT":
+        if aktuelles_objekt is None or aktuelles_objekt == "Nicht gefunden":
+            with st.spinner("Anonyme Auswahl. Leite an Hosts weiter..."):
+                execute_transitional_routing(user_input, "Anonyme Objektauswahl")
                 st.rerun()
+        else:
+            with st.spinner("Durchsuche Matrix..."):
+                context_str = extract_context_for_object(aktuelles_objekt)
+                ai_response = call_gemini_api(user_input, context_str)
                 
-    # Pfad A & B: Chat & Suchen/Schreiben
-    else:
-        if user_input := st.chat_input("Wie kann ich dir helfen?"):
-            st.session_state.messages.append({"role": "user", "content": user_input})
-            with st.chat_message("user"): st.markdown(user_input)
-            
-            # OUTPUT (Suchen)
-            if aktuelle_richtung == "OUTPUT":
-                if aktuelles_objekt is None or aktuelles_objekt == "Nicht gefunden":
-                    with st.spinner("Anonyme Auswahl. Leite an Hosts weiter..."):
-                        execute_transitional_routing(user_input, "Anonyme Objektauswahl")
-                        st.rerun()
+                luecken_indikatoren = ["keine information", "weiß ich nicht", "nicht hinterlegt", "leider nein", "nicht bekannt"]
+                if any(ind in ai_response.lower() for ind in luecken_indikatoren):
+                    execute_transitional_routing(user_input, f"Wissenslücke bei: {aktuelles_objekt}")
                 else:
-                    with st.spinner("Durchsuche Matrix..."):
-                        context_str = extract_context_for_object(aktuelles_objekt)
-                        ai_response = call_gemini_api(user_input, context_str)
-                        
-                        luecken_indikatoren = ["keine information", "weiß ich nicht", "nicht hinterlegt", "leider nein", "nicht bekannt"]
-                        if any(ind in ai_response.lower() for ind in luecken_indikatoren):
-                            execute_transitional_routing(user_input, f"Wissenslücke bei: {aktuelles_objekt}")
-                        else:
-                            st.session_state.messages.append({"role": "assistant", "content": ai_response})
-                        st.rerun()
-            
-            # INPUT (Schreiben)
-            elif aktuelle_richtung == "INPUT":
-                with st.spinner("Protokolliere Eintrag in der Matrix (Schreiben in Blau)..."):
-                    execute_matrix_input(st.session_state.aktiver_use_case, aktuelles_objekt, user_input)
-                    danke_satz = f"Vielen Dank! Ich habe deine Eingabe zum Thema '{st.session_state.aktiver_use_case}' für die Hosts eingetragen."
-                    st.session_state.messages.append({"role": "assistant", "content": danke_satz})
-                    st.cache_data.clear()
-                    st.rerun()
+                    st.session_state.messages.append({"role": "assistant", "content": ai_response})
+                st.rerun()
+    
+    # INPUT-PFAD (Direktes Schreiben in Blau)
+    elif aktuelle_richtung == "INPUT":
+        with st.spinner("Protokolliere Eintrag in der Matrix (Schreiben in Blau)..."):
+            execute_matrix_input(st.session_state.aktiver_use_case, aktuelles_objekt, user_input)
+            danke_satz = f"Vielen Dank! Ich habe deine Eingabe zum Thema '{st.session_state.aktiver_use_case}' für die Hosts eingetragen."
+            st.session_state.messages.append({"role": "assistant", "content": danke_satz})
+            st.cache_data.clear()
+            st.rerun()
