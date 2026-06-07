@@ -20,7 +20,7 @@ FILE_ID = '1FzhWZuO6aRZkdRuQBzaojhkq7bQDyprl'
 FALLBACK_SATZ = "Ich habe dazu leider keine Informationen, Ich gebe das aber gern an die Hosts weiter."
 
 # ==============================================================================
-# DATEN-LADE ENGINE (Drei-Blatt-Modell mit header=1 wegen leerer Zeile 1)
+# DATEN-LADE ENGINE (Drei-Blatt-Modell - Jetzt mit header=0 da Spaltenköpfe in Zeile 1)
 # ==============================================================================
 @st.cache_data(ttl=30)
 def load_dynamic_data():
@@ -36,12 +36,12 @@ def load_dynamic_data():
         while done is False: _, done = downloader.next_chunk()
             
         fh.seek(0)
-        # 🚨 PRO-MODUS ANKER: header=1 zwingt Pandas, Zeile 1 komplett zu ignorieren
-        df_wissen = pd.read_excel(fh, sheet_name="Wissensbasis", header=1)
+        # Gelesen ab Zeile 1 (Standard header=0)
+        df_wissen = pd.read_excel(fh, sheet_name="Wissensbasis", header=0)
         fh.seek(0)
-        df_lexikon = pd.read_excel(fh, sheet_name="Spalten_Lexikon", header=1)
+        df_lexikon = pd.read_excel(fh, sheet_name="Spalten_Lexikon", header=0)
         fh.seek(0)
-        df_usecases = pd.read_excel(fh, sheet_name="UseCase_Lexikon", header=1)
+        df_usecases = pd.read_excel(fh, sheet_name="UseCase_Lexikon", header=0)
         
         if df_wissen is not None and not df_wissen.empty and "Wo?" in df_wissen.columns:
             df_wissen["Wo?"] = df_wissen["Wo?"].ffill()
@@ -61,6 +61,16 @@ with st.spinner("Synchronisiere mit der Excel-Zentralmatrix..."):
 def get_ki_client():
     if "GEMINI_API_KEY" in st.secrets: 
         return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    return None
+
+def find_column_by_fuzzy_name(headers, target_name):
+    cleaned_headers = [str(h).strip().lower().replace("\n", " ") for h in headers]
+    search = str(target_name).strip().lower()
+    if search in cleaned_headers:
+        return cleaned_headers.index(search) + 1
+    for idx, h in enumerate(cleaned_headers):
+        if search in h:
+            return idx + 1
     return None
 
 def call_gemini_api(prompt, context="", system_context=None):
@@ -132,25 +142,24 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
         wb = openpyxl.load_workbook(fh)
         ws = wb["Wissensbasis"]
         
-        # Zeilenfindung ab Zeile 3 (Zeile 2 hält die Header)
+        # Nimmt die echte erste Zeile als Spaltennamen (Zeile 1)
+        headers = [str(c.value) if c.value else "" for c in ws[1]]
+        col_bez_idx = find_column_by_fuzzy_name(headers, "Bezeichnung") or 1
+        
+        # Zeilenfindung ab Zeile 2 (Da Header jetzt in Zeile 1 sitzt)
         ziel_row_idx = None
-        for row in range(3, ws.max_row + 1):
-            cell_val = ws.cell(row=row, column=1).value
+        for row in range(2, ws.max_row + 1):
+            cell_val = ws.cell(row=row, column=col_bez_idx).value
             if cell_val and str(cell_val).strip().lower() == ziel_objekt.lower().strip():
                 ziel_row_idx = row
                 break
                 
         if not ziel_row_idx:
             ziel_row_idx = ws.max_row + 1
-            ws.cell(row=ziel_row_idx, column=1).value = "Nicht gefunden"
+            ws.cell(row=ziel_row_idx, column=col_bez_idx).value = "Nicht gefunden"
             
-        # Spaltenfindung im Header (Zeile 2)
-        ziel_col_idx = None
-        for col in range(1, ws.max_column + 1):
-            header_val = ws.cell(row=2, column=col).value
-            if header_val and str(header_val).strip().lower() == physische_zielspalte.lower().strip():
-                ziel_col_idx = col
-                break
+        # Spaltenfindung im Header (Zeile 1)
+        ziel_col_idx = find_column_by_fuzzy_name(headers, physische_zielspalte)
                 
         if not ziel_col_idx: return 
             
@@ -167,18 +176,17 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
         ziel_zelle.font = Font(color="1F4E78")
         ziel_zelle.alignment = Alignment(wrap_text=True)
         
-        # Automatisches Status-Handling (Suche nach "... Status" Spalte in Zeile 2)
+        # Automatisches Status-Handling (Suche nach "... Status" Spalte in Zeile 1)
         status_col_name = f"{physische_zielspalte} Status"
-        for col in range(1, ws.max_column + 1):
-            header_val = ws.cell(row=2, column=col).value
-            if header_val and str(header_val).strip().lower() == status_col_name.lower().strip():
-                status_wert = "aktiv" if "störung" in use_case_name.lower() else "offen"
-                status_zelle = ws.cell(row=ziel_row_idx, column=col)
-                alter_status = status_zelle.value or ""
-                neuer_status = f"[{zeitstempel}]: {status_wert}"
-                status_zelle.value = f"{alter_status}\n{neuer_status}" if alter_status else neuer_status
-                status_zelle.font = Font(color="1F4E78")
-                break
+        status_col_idx = find_column_by_fuzzy_name(headers, status_col_name)
+        
+        if status_col_idx:
+            status_wert = "aktiv" if "störung" in use_case_name.lower() else "offen"
+            status_zelle = ws.cell(row=ziel_row_idx, column=status_col_idx)
+            alter_status = status_zelle.value or ""
+            neuer_status = f"[{zeitstempel}]: {status_wert}"
+            status_zelle.value = f"{alter_status}\n{neuer_status}" if alter_status else neuer_status
+            status_zelle.font = Font(color="1F4E78")
                 
         output_stream = io.BytesIO()
         wb.save(output_stream)
@@ -189,9 +197,10 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
     except Exception as e:
         st.error(f"Fehler beim Schreiben in die Zentralmatrix: {e}")
 
-def execute_transitional_routing(user_input, grund_info):
+def execute_transitional_routing(user_input, objekt_name=None):
     st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
-    execute_matrix_input("Keine Information", "Nicht gefunden", user_input)
+    ziel_obj = objekt_name if objekt_name else "Nicht gefunden"
+    execute_matrix_input("Keine Information", ziel_obj, user_input)
     st.cache_data.clear()
 
 def generate_raw_report_context(filter_type):
@@ -356,9 +365,9 @@ if st.session_state.aktive_rolle and df_usecases is not None:
                             break
 
 # ==============================================================================
-# CHAT & PROCESSING LAYER (Datenflüsse & Transitional Routing)
+# CHAT & PROCESSING LAYER (Datenflüsse & Unbestechliches Routing)
 # ==============================================================================
-# 🚨 EXECUTE REPORT-GENERATION: Durchbricht die Endlosschleife zuverlässig
+# EXECUTE REPORT-GENERATION
 if st.session_state.aktiver_use_case and "bericht" in st.session_state.aktiver_use_case.lower() and st.session_state.bericht_filter:
     with st.spinner("Analysiere Datenbasis..."):
         report_data_str = generate_raw_report_context(st.session_state.bericht_filter)
@@ -369,7 +378,6 @@ if st.session_state.aktiver_use_case and "bericht" in st.session_state.aktiver_u
             report_output = call_gemini_api(prompt, system_context="Liste Fakten auf, nutze Bulletpoints, bleibe sachlich.")
         
         st.session_state.messages.append({"role": "assistant", "content": report_output})
-        # ⚡ LOOP-BREAKER: Filter zwingend zurücksetzen vor dem Rerun!
         st.session_state.bericht_filter = None
         st.rerun()
 
@@ -389,24 +397,37 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
     # OUTPUT-PFAD (Suchen & Finden)
     if aktuelle_richtung == "OUTPUT":
         if aktuelles_objekt is None or aktuelles_objekt == "Nicht gefunden":
-            with st.spinner("Anonyme Auswahl. Leite an Hosts weiter..."):
-                execute_transitional_routing(user_input, "Anonyme Objektauswahl")
+            with st.spinner("Anonyme Auswahl oder Objekt nicht gefunden. Leite an Hosts weiter..."):
+                execute_transitional_routing(user_input, aktuelles_objekt)
                 st.rerun()
         else:
             with st.spinner("Durchsuche Matrix..."):
                 context_str = extract_context_for_object(aktuelles_objekt)
-                ai_response = call_gemini_api(user_input, context_str)
                 
-                luecken_indikatoren = ["keine information", "weiß ich nicht", "nicht hinterlegt", "leider nein", "nicht bekannt"]
-                if any(ind in ai_response.lower() for ind in luecken_indikatoren):
-                    execute_transitional_routing(user_input, f"Wissenslücke bei: {aktuelles_objekt}")
+                # Deterministischer Vorab-Wortabgleich zur Vermeidung von Halluzinationen
+                such_woerter = [w.strip().lower() for w in user_input.split() if len(w.strip()) > 3]
+                wissensluecke_erkannt = False
+                
+                if (such_woerter and not any(w in context_str.lower() for w in such_woerter)) or not context_str.strip():
+                    wissensluecke_erkannt = True
+                
+                if wissensluecke_erkannt:
+                    execute_transitional_routing(user_input, aktuelles_objekt)
+                    st.rerun()
                 else:
-                    st.session_state.messages.append({"role": "assistant", "content": ai_response})
-                st.rerun()
+                    ai_response = call_gemini_api(user_input, context_str)
+                    
+                    # Sicherheitsnetz: Falls die KI im Freitext eingesteht etwas nicht zu wissen
+                    luecken_indikatoren = ["keine information", "weiß ich nicht", "nicht hinterlegt", "leider nein", "nicht bekannt", "fehlen mir details"]
+                    if any(ind in ai_response.lower() for ind in luecken_indikatoren):
+                        execute_transitional_routing(user_input, aktuelles_objekt)
+                    else:
+                        st.session_state.messages.append({"role": "assistant", "content": ai_response})
+                    st.rerun()
     
     # INPUT-PFAD (Direktes Schreiben in Blau)
     elif aktuelle_richtung == "INPUT":
-        with st.spinner("Protokolliere Eintrag in der Matrix (Schreiben in Blau)..."):
+        with st.spinner("Protokolliere Eintrag in der Matrix..."):
             execute_matrix_input(st.session_state.aktiver_use_case, aktuelles_objekt, user_input)
             danke_satz = f"Vielen Dank! Ich habe deine Eingabe zum Thema '{st.session_state.aktiver_use_case}' für die Hosts eingetragen."
             st.session_state.messages.append({"role": "assistant", "content": danke_satz})
