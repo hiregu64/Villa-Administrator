@@ -1,435 +1,154 @@
 import streamlit as st
+import google.generativeai as genai
 import pandas as pd
-import io
-import datetime
-import openpyxl
-from openpyxl.styles import Font, Alignment
-from google import genai
-from google.genai import types
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
+from google.oauth2.service_account import Credentials
+import gspread
 
-# ==============================================================================
-# CONFIGURATION & INFRASTRUCTURE (Sicht G)
-# ==============================================================================
-st.set_page_config(page_title="Villa Avatar", page_icon="☀️", layout="centered")
-FILE_ID = '1FzhWZuO6aRZkdRuQBzaojhkq7bQDyprl'
+# 1. SEITEN-KONFIGURATION & SMARTPHONE-OPTIMIERUNG
+st.set_page_config(
+    page_title="Villa Avatar",
+    page_icon="🏡",
+    layout="centered", # 'centered' eignet sich besser für Mobile/Smartphones
+    initial_sidebar_state="collapsed"
+)
 
-# Unverrückbarer Fallback-Satz aus der Master-Spezifikation (Kapitel 1.3)
-FALLBACK_SATZ = "Ich habe dazu leider keine Informationen, Ich gebe das aber gern an die Hosts weiter."
-
-# ==============================================================================
-# DATEN-LADE ENGINE (Drei-Blatt-Modell - Jetzt mit header=0 da Spaltenköpfe in Zeile 1)
-# ==============================================================================
-@st.cache_data(ttl=30)
-def load_dynamic_data():
-    try:
-        creds_dict = st.secrets["GOOGLE_CREDENTIALS"]
-        creds = service_account.Credentials.from_service_account_info(creds_dict)
-        service = build('drive', 'v3', credentials=creds)
-        
-        request = service.files().get_media(fileId=FILE_ID)
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while done is False: _, done = downloader.next_chunk()
-            
-        fh.seek(0)
-        # Gelesen ab Zeile 1 (Standard header=0)
-        df_wissen = pd.read_excel(fh, sheet_name="Wissensbasis", header=0)
-        fh.seek(0)
-        df_lexikon = pd.read_excel(fh, sheet_name="Spalten_Lexikon", header=0)
-        fh.seek(0)
-        df_usecases = pd.read_excel(fh, sheet_name="UseCase_Lexikon", header=0)
-        
-        if df_wissen is not None and not df_wissen.empty and "Wo?" in df_wissen.columns:
-            df_wissen["Wo?"] = df_wissen["Wo?"].ffill()
-            
-        return df_wissen, df_lexikon, df_usecases, service
-    except Exception as e:
-        st.error(f"Kritischer Fehler beim Laden der Datenspezifikation: {e}")
-        return None, None, None, None
-
-with st.spinner("Synchronisiere mit der Excel-Zentralmatrix..."):
-    df_wissen, df_lexikon, df_usecases, drive_service = load_dynamic_data()
-
-# ==============================================================================
-# KI & BACKGROUND CORE FUNCTIONS (Die semantische API-Schicht)
-# ==============================================================================
-@st.cache_resource
-def get_ki_client():
-    if "GEMINI_API_KEY" in st.secrets: 
-        return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-    return None
-
-def find_column_by_fuzzy_name(headers, target_name):
-    cleaned_headers = [str(h).strip().lower().replace("\n", " ") for h in headers]
-    search = str(target_name).strip().lower()
-    if search in cleaned_headers:
-        return cleaned_headers.index(search) + 1
-    for idx, h in enumerate(cleaned_headers):
-        if search in h:
-            return idx + 1
-    return None
-
-def call_gemini_api(prompt, context="", system_context=None):
-    client = get_ki_client()
-    if client is None: return "🛑 KI-Schnittstelle nicht konfiguriert."
-    
-    sys_instruction = system_context or (
-        "Du bist Villa Avatar, der digitale Helfer. Antworte immer kurz, freundlich, präzise und smartphone-optimiert. "
-        "Beziehe dich exakt auf die mitgegebenen Live-Daten. Erfinde NIEMALS Fakten. "
-        "ABSOLUTES VERBOT: Erwähne NIEMALS interne Dateinamen, Spaltenbezeichnungen oder Excel-Strukturen."
-    )
-    full_prompt = f"Kontext aus der verifizierten Wissensbasis:\n{context}\n\nNutzerfrage: {prompt}" if context else prompt
-    
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash", 
-            contents=full_prompt, 
-            config=types.GenerateContentConfig(system_instruction=sys_instruction)
-        )
-        return response.text
-    except Exception as e:
-        return f"🛑 KI temporär nicht erreichbar: {e}"
-
-def extract_context_for_object(objekt_name):
-    if df_wissen is None or df_lexikon is None or objekt_name is None: return ""
-    
-    bez_col = df_wissen.columns[0] if "Bezeichnung" not in df_wissen.columns else "Bezeichnung"
-    row_match = df_wissen[df_wissen[bez_col].astype(str).str.strip().str.lower() == objekt_name.lower().strip()]
-    if row_match.empty: return ""
-    
-    lex_spalten_name = df_lexikon.columns[0]
-    rolle_idx = 2 if st.session_state.aktive_rolle == "Gast" else 3 
-    lex_rollen_freigabe = df_lexikon.columns[rolle_idx]
-    
-    freigegebene_tags = df_lexikon[df_lexikon[lex_rollen_freigabe].astype(str).str.lower().str.strip() == "ja"][lex_spalten_name].tolist()
-    
-    context_parts = [f"Informationen zum Objekt: {objekt_name}"]
-    for col in df_wissen.columns:
-        if col in freigegebene_tags and col in row_match.columns:
-            val = row_match.iloc[0][col]
-            if pd.notna(val) and str(val).strip() != "":
-                context_parts.append(f"- {col}: {str(val).strip()}")
-                
-    return "\n".join(context_parts)
-
-def execute_matrix_input(use_case_name, objekt_name, freitext):
-    if drive_service is None or df_lexikon is None: return
-    try:
-        ziel_objekt = "Nicht gefunden" if (objekt_name is None or objekt_name == "Nicht gefunden") else objekt_name
-        
-        # Spalten_Lexikon: Spalte E (Index 4) liefert das funktionale HMI-Tagging
-        tag_col_name = df_lexikon.columns[4]
-        lex_spalten_name = df_lexikon.columns[0]
-        
-        match_lex = df_lexikon[df_lexikon[tag_col_name].astype(str).str.lower().str.strip() == use_case_name.lower().strip()]
-        if match_lex.empty:
-            st.error(f"Administrativer Fehler: Kein Tag im Spalten_Lexikon für '{use_case_name}' definiert.")
-            return
-            
-        physische_zielspalte = match_lex.iloc[0][lex_spalten_name]
-        
-        request = drive_service.files().get_media(fileId=FILE_ID)
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while not done: _, done = downloader.next_chunk()
-        
-        fh.seek(0)
-        wb = openpyxl.load_workbook(fh)
-        ws = wb["Wissensbasis"]
-        
-        # Nimmt die echte erste Zeile als Spaltennamen (Zeile 1)
-        headers = [str(c.value) if c.value else "" for c in ws[1]]
-        col_bez_idx = find_column_by_fuzzy_name(headers, "Bezeichnung") or 1
-        
-        # Zeilenfindung ab Zeile 2 (Da Header jetzt in Zeile 1 sitzt)
-        ziel_row_idx = None
-        for row in range(2, ws.max_row + 1):
-            cell_val = ws.cell(row=row, column=col_bez_idx).value
-            if cell_val and str(cell_val).strip().lower() == ziel_objekt.lower().strip():
-                ziel_row_idx = row
-                break
-                
-        if not ziel_row_idx:
-            ziel_row_idx = ws.max_row + 1
-            ws.cell(row=ziel_row_idx, column=col_bez_idx).value = "Nicht gefunden"
-            
-        # Spaltenfindung im Header (Zeile 1)
-        ziel_col_idx = find_column_by_fuzzy_name(headers, physische_zielspalte)
-                
-        if not ziel_col_idx: return 
-            
-        # Chronologischer Append-Workflow & Formatierung (Schreiben in Blau: #1F4E78)
-        zeitstempel = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
-        nutzer = st.session_state.aktive_rolle
-        alter_inhalt = ws.cell(row=ziel_row_idx, column=ziel_col_idx).value or ""
-        
-        neuer_eintrag = f"[{zeitstempel} | {nutzer}]: {freitext}"
-        kompletter_text = f"{alter_inhalt}\n{neuer_eintrag}" if alter_inhalt else neuer_eintrag
-            
-        ziel_zelle = ws.cell(row=ziel_row_idx, column=ziel_col_idx)
-        ziel_zelle.value = kompletter_text
-        ziel_zelle.font = Font(color="1F4E78")
-        ziel_zelle.alignment = Alignment(wrap_text=True)
-        
-        # Automatisches Status-Handling (Suche nach "... Status" Spalte in Zeile 1)
-        status_col_name = f"{physische_zielspalte} Status"
-        status_col_idx = find_column_by_fuzzy_name(headers, status_col_name)
-        
-        if status_col_idx:
-            status_wert = "aktiv" if "störung" in use_case_name.lower() else "offen"
-            status_zelle = ws.cell(row=ziel_row_idx, column=status_col_idx)
-            alter_status = status_zelle.value or ""
-            neuer_status = f"[{zeitstempel}]: {status_wert}"
-            status_zelle.value = f"{alter_status}\n{neuer_status}" if alter_status else neuer_status
-            status_zelle.font = Font(color="1F4E78")
-                
-        output_stream = io.BytesIO()
-        wb.save(output_stream)
-        output_stream.seek(0)
-        media = MediaIoBaseUpload(output_stream, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', resumable=True)
-        drive_service.files().update(fileId=FILE_ID, media_body=media).execute()
-        
-    except Exception as e:
-        st.error(f"Fehler beim Schreiben in die Zentralmatrix: {e}")
-
-def execute_transitional_routing(user_input, objekt_name=None):
-    st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
-    ziel_obj = objekt_name if objekt_name else "Nicht gefunden"
-    execute_matrix_input("Keine Information", ziel_obj, user_input)
-    st.cache_data.clear()
-
-def generate_raw_report_context(filter_type):
-    if df_wissen is None: return "Keine Einträge verfügbar."
-    report_lines = []
-    
-    for col in df_wissen.columns:
-        verarbeiten = False
-        if filter_type == "offene_stoerungen" and "störung" in col.lower() and "status" not in col.lower(): verarbeiten = True
-        elif filter_type == "behobene_stoerungen" and "störung" in col.lower() and "status" not in col.lower(): verarbeiten = True
-        elif filter_type == "offenes_feedback" and "feedback" in col.lower() and "status" not in col.lower(): verarbeiten = True
-        elif filter_type == "ignoriertes_feedback" and "feedback" in col.lower() and "status" not in col.lower(): verarbeiten = True
-        elif filter_type == "offene_luecken" and "information" in col.lower() and "status" not in col.lower(): verarbeiten = True
-        elif filter_type == "gesamtuebersicht" and ("störung" in col.lower() or "feedback" in col.lower() or "information" in col.lower()) and "status" not in col.lower(): verarbeiten = True
-            
-        if verarbeiten:
-            bez_col = df_wissen.columns[0]
-            for idx, row in df_wissen.iterrows():
-                cell_val = row[col]
-                ist_gueltig = True
-                status_col = f"{col} Status"
-                
-                if status_col in df_wissen.columns:
-                    status_val = str(row[status_col]).lower()
-                    if filter_type == "offene_stoerungen" and "aktiv" not in status_val: ist_gueltig = False
-                    if filter_type == "behobene_stoerungen" and "ok" not in status_val and "beheben" not in status_val: ist_gueltig = False
-                    if filter_type == "offenes_feedback" and "offen" not in status_val: ist_gueltig = False
-                    if filter_type == "ignoriertes_feedback" and "nein" not in status_val and "ignorier" not in status_val: ist_gueltig = False
-                    if filter_type == "offene_luecken" and "offen" not in status_val: ist_gueltig = False
-                    
-                if pd.notna(cell_val) and str(cell_val).strip() != "" and ist_gueltig:
-                    report_lines.append(f"Objekt: {row[bez_col]} | Kat: {col}\nEintrag: {cell_val}\n---")
-                    
-    return "\n".join(report_lines) if report_lines else "Keine passenden Einträge gefunden."
-
-# Callback für Dropdowns, um Kaskadenfehler und Loops zu verhindern
-def reset_chat_flow():
-    st.session_state.messages = []
-
-# ==============================================================================
-# HMI PRESENTATION LAYER (Native Integration & Asymmetrie)
-# ==============================================================================
+# CSS für Smartphone-Optimierung (Kacheln und Chat-Layout)
 st.markdown("""
-    <style>
-    div.stButton > button[kind="primary"] { background-color: #e3f2fd !important; color: #1565c0 !important; border: 1px solid #bbdefb !important; font-weight: bold !important; }
-    div[data-testid="stChatMessage"]:has(div[aria-label="Chat message from user"]) { 
-        flex-direction: row-reverse !important; 
-        background-color: #F0F2F6 !important; 
-        border-radius: 10px !important; 
-        padding: 10px !important; 
+<style>
+    .status-card {
+        background-color: #f0f2f6;
+        padding: 15px;
+        border-radius: 10px;
+        text-align: center;
+        margin-bottom: 10px;
     }
-    div[data-testid="stChatMessage"]:has(div[aria-label="Chat message from user"]) div[data-testid="stChatMessageContent"] { text-align: right !important; width: 100% !important; }
-    </style>
+    .stChatMessage {
+        border-radius: 15px;
+    }
+</style>
 """, unsafe_allow_html=True)
 
-st.title("☀️ Villa Avatar")
+# 2. INITIALISIERUNG & API-KEYS
+if "GEMINI_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+else:
+    st.error("Bitte GEMINI_API_KEY in den Streamlit Secrets hinterlegen.")
+    st.stop()
 
-if "aktive_rolle" not in st.session_state: st.session_state.aktive_rolle = None
-if "aktiver_use_case" not in st.session_state: st.session_state.aktiver_use_case = None
-if "messages" not in st.session_state: st.session_state.messages = []
-if "bericht_filter" not in st.session_state: st.session_state.bericht_filter = None
-
-# KASKADE 1: Rollen-Wechsel
-neue_rolle = st.selectbox("Rolle", options=["Gast", "Host"], index=None, placeholder="Wer bist du?", label_visibility="collapsed")
-if neue_rolle != st.session_state.aktive_rolle:
-    st.session_state.aktive_rolle = neue_rolle
-    st.session_state.aktiver_use_case = None
-    st.session_state.bericht_filter = None
-    st.session_state.messages = []
-    for key in list(st.session_state.keys()):
-        if key.startswith("dropdown_"): del st.session_state[key]
-    st.rerun()
-
-aktuelles_objekt = None
-aktuelle_richtung = None
-
-if st.session_state.aktive_rolle and df_usecases is not None:
-    st.write("---")
-    uc_col = df_usecases.columns[0]
-    dir_col = df_usecases.columns[1]
-    hmi_col = df_usecases.columns[2]
-    
-    mask_sichtbar = df_usecases[hmi_col].astype(str).str.lower().str.strip() == "ja"
-    verfuegbare_uc = df_usecases[mask_sichtbar][uc_col].tolist()
-    
-    if st.session_state.aktive_rolle == "Gast":
-        erlaubte_buttons = [uc for uc in verfuegbare_uc if any(x in uc.lower() for x in ["hilfe", "störung", "feedback"])]
-    else:
-        erlaubte_buttons = verfuegbare_uc
-
-    # KASKADE 2: Use Cases
-    cols = st.columns(len(erlaubte_buttons))
-    neuer_use_case = st.session_state.aktiver_use_case
-    
-    for idx, uc_name in enumerate(erlaubte_buttons):
-        with cols[idx]:
-            is_active = (st.session_state.aktiver_use_case == uc_name)
-            if st.button(uc_name, use_container_width=True, type="primary" if is_active else "secondary"):
-                neuer_use_case = uc_name
-
-    if neuer_use_case != st.session_state.aktiver_use_case:
-        st.session_state.aktiver_use_case = neuer_use_case
-        st.session_state.bericht_filter = None
-        st.session_state.messages = []
-        for key in list(st.session_state.keys()):
-            if key.startswith("dropdown_"): del st.session_state[key]
-        st.rerun()
-
-    # KASKADE 3: Dropdowns & Report UI
-    if st.session_state.aktiver_use_case:
-        uc_row = df_usecases[df_usecases[uc_col].astype(str).str.lower().str.strip() == st.session_state.aktiver_use_case.lower().strip()]
-        if not uc_row.empty:
-            aktuelle_richtung = str(uc_row.iloc[0][dir_col]).strip().upper()
-            
-            if "bericht" in st.session_state.aktiver_use_case.lower():
-                st.write("")
-                b_col1, b_col2 = st.columns(2)
-                b_col3, b_col4 = st.columns(2)
-                b_col5, b_col6 = st.columns(2)
-                
-                with b_col1:
-                    if st.button("⚠️ Offene Störungen", use_container_width=True): st.session_state.bericht_filter = "offene_stoerungen"; st.rerun()
-                with b_col2:
-                    if st.button("✅ Behobene Störungen", use_container_width=True): st.session_state.bericht_filter = "behobene_stoerungen"; st.rerun()
-                with b_col3:
-                    if st.button("💡 Offenes Feedback", use_container_width=True): st.session_state.bericht_filter = "offenes_feedback"; st.rerun()
-                with b_col4:
-                    if st.button("❌ Ignoriertes Feedback", use_container_width=True): st.session_state.bericht_filter = "ignoriertes_feedback"; st.rerun()
-                with b_col5:
-                    if st.button("🔍 Offene Wissenslücken", use_container_width=True): st.session_state.bericht_filter = "offene_luecken"; st.rerun()
-                with b_col6:
-                    if st.button("📋 Gesamtübersicht", use_container_width=True): st.session_state.bericht_filter = "gesamtuebersicht"; st.rerun()
-            else:
-                STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
-                if df_wissen is not None and not df_wissen.empty:
-                    bez_spalte = df_wissen.columns[0] if "Bezeichnung" not in df_wissen.columns else "Bezeichnung"
-                    kat_spalte = df_wissen.columns[1] if "Wo?" not in df_wissen.columns else "Wo?"
-                    
-                    st.write("")
-                    for kat in STANDARD_DROPDOWNS:
-                        if "innen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
-                        elif "außen" in kat.lower() or "aussen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("außen|aussen", case=False, na=False)
-                        else: mask = df_wissen[kat_spalte].astype(str).str.contains("nähe|naehe|In der Nähe", case=False, na=False)
-                        
-                        if st.session_state.aktive_rolle == "Gast" and "Relevanz Gast" in df_wissen.columns:
-                            mask = mask & (df_wissen["Relevanz Gast"].astype(str).str.strip().str.lower() == "x")
-                        
-                        verfuegbare_bez = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
-                        verfuegbare_bez = sorted([str(b).strip() for b in verfuegbare_bez])
-                        if "Nicht gefunden" in verfuegbare_bez: verfuegbare_bez.remove("Nicht gefunden")
-                        verfuegbare_bez.append("Nicht gefunden")
-                        
-                        dp_key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
-                        
-                        # Sichere Kaskadensteuerung über on_change Callback
-                        st.selectbox(label=f"hidden_{kat}", options=verfuegbare_bez, index=None, placeholder=f"🔎 {kat} wählen...", key=dp_key, on_change=reset_chat_flow, label_visibility="collapsed")
-                            
-                    for kat in STANDARD_DROPDOWNS:
-                        val = st.session_state.get(f"dropdown_{kat}_{st.session_state.aktiver_use_case}")
-                        if val is not None:
-                            aktuelles_objekt = val
-                            break
-
-# ==============================================================================
-# CHAT & PROCESSING LAYER (Datenflüsse & Unbestechliches Routing)
-# ==============================================================================
-# EXECUTE REPORT-GENERATION
-if st.session_state.aktiver_use_case and "bericht" in st.session_state.aktiver_use_case.lower() and st.session_state.bericht_filter:
-    with st.spinner("Analysiere Datenbasis..."):
-        report_data_str = generate_raw_report_context(st.session_state.bericht_filter)
-        if "Keine passenden Einträge" in report_data_str:
-            report_output = f"Aktuell liegen keine Einträge für den Filter '{st.session_state.bericht_filter}' vor. ☀️"
-        else:
-            prompt = f"Du bist der administrative Analyst. Strukturiere diese Matrix-Daten professionell und chronologisch für den Host:\n\n{report_data_str}"
-            report_output = call_gemini_api(prompt, system_context="Liste Fakten auf, nutze Bulletpoints, bleibe sachlich.")
+# 3. DATEN-ZUGRIFF (WISSENSBASIS VIA SERVICE ACCOUNT)
+@st.cache_data(ttl=60) # Cache für 60 Sekunden, um API-Limits zu schonen
+def load_wissensbasis():
+    try:
+        # Erstelle Credentials aus den Streamlit Secrets
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+        client = gspread.authorize(creds)
         
-        st.session_state.messages.append({"role": "assistant", "content": report_output})
-        st.session_state.bericht_filter = None
-        st.rerun()
+        # Öffne das Spreadsheet (Nutze die ID aus deinem Link)
+        sheet_id = "1FzhWZuO6aRZkdRuQBzaojhkq7bQDyprl"
+        sheet = client.open_by_key(sheet_id).sheet1 # Liest das erste Tabellenblatt
+        
+        # In DataFrame laden (Köpfe in Zeile 1 werden automatisch genutzt)
+        data = sheet.get_all_records()
+        df = pd.DataFrame(data)
+        return df
+    except Exception as e:
+        st.error(f"Fehler beim Laden der Wissensbasis: {e}")
+        return pd.DataFrame()
 
-st.write("---")
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]): st.markdown(msg["content"])
+df_knowledge = load_wissensbasis()
 
-if st.session_state.aktiver_use_case and "bericht" not in st.session_state.aktiver_use_case.lower():
-    if user_input := st.chat_input("Wie kann ich dir helfen?"):
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        st.rerun()
+# 4. BENUTZEROBERFLÄCHE (NUTZER-EBENE)
+st.title("🏡 Villa Avatar")
+st.subheader("Dein digitaler Begleiter")
 
-# Logikverarbeitung direkt nach State-Eingabe (Verhindert asynchrone Sprünge)
-if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-    user_input = st.session_state.messages[-1]["content"]
+# Rollenauswahl (Gast, Host, Admin)
+if "role" not in st.session_state:
+    st.session_state.role = "Gast"
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    if st.button("🧳 Gast", use_container_width=True): st.session_state.role = "Gast"
+with col2:
+    if st.button("🔑 Host", use_container_width=True): st.session_state.role = "Host"
+with col3:
+    if st.button("🛠️ Admin", use_container_width=True): st.session_state.role = "Admin"
+
+st.caption(f"Aktuelle Ansicht optimiert für: **{st.session_state.role}**")
+
+# STATUS-KACHELN (Beispielhafte Darstellung basierend auf Live-Daten)
+st.markdown("### 📊 System-Status")
+kachel_cols = st.columns(2)
+with kachel_cols[0]:
+    st.markdown('<div class="status-card"><strong>WLAN</strong><br/>✅ Online</div>', unsafe_allow_html=True)
+with kachel_cols[1]:
+    # Dynamischer Wert aus der Tabelle gezogen (Beispiel)
+    status_pool = "Bereit" if not df_knowledge.empty else "Keine Daten"
+    st.markdown(f'<div class="status-card"><strong>Pool-Temperatur</strong><br/>🏊 {status_pool}</div>', unsafe_allow_html=True)
+
+# 5. CHAT-LOGIK & PROMPT-INJEKTION
+VILLA_PROMPT_TEMPLATE = """
+Du bist „Villa Avatar“, der digitale Helfer für die Gäste (Gast), Gastgeber (Host) und Administratoren (Admin) der Villa. Deine Aufgabe ist es, den Aufenthalt, Betrieb und Erhalt des Hauses so einfach und angenehm wie möglich zu gestalten.
+
+WICHTIGER KONTEXT & VERHALTEN:
+- Antworte immer kurz, freundlich, präzise und smartphone-optimiert (nutze kurze Absätze oder Aufzählungspunkte).
+- Passe deine Tonalität an die übergebene Rolle an: Zu Gästen (Gast) bist du einladend und herzlich, zu Hosts und Admins agierst du effizient und lösungsorientiert.
+- Beziehe dich bei Antworten exakt auf die mitgegebenen Live-Daten aus der Wissensbasis. 
+- WICHTIG (Wissenslücken): Wenn die mitgegebenen Daten keine Antwort auf die Frage des Nutzers enthalten, erfinde niemals Informationen! Antworte stattdessen: „Dazu liegen mir aktuell leider keine Informationen vor. Ich leite dein Anliegen aber gerne an das Team weiter.“
+- ABSOLUTES VERBOT: Erwähne NIEMALS interne Dateinamen, Bildbezeichnungen (wie '.jfif' oder '.jpg') oder die Struktur der Excel-Tabelle (wie 'Spalte A', 'Spalte B', Überschriften oder Zeilen). Antworte so, als hättest du dieses Wissen einfach natürlich im Kopf.
+
+AKTUELLE ROLLE DES NUTZERS: {role}
+
+LIVE-DATEN AUS DER WISSENSBASIS (Nutze diese exklusiv für Sachfragen):
+{knowledge_data}
+"""
+
+# Chat-Verlauf initialisieren
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# Chat-Verlauf anzeigen
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# Chat-Eingabe (Tastatur / Spracheingabe des Smartphones wird nativ unterstützt)
+if user_input := st.chat_input("Wie kann ich dir heute helfen?"):
     
-    # OUTPUT-PFAD (Suchen & Finden)
-    if aktuelle_richtung == "OUTPUT":
-        if aktuelles_objekt is None or aktuelles_objekt == "Nicht gefunden":
-            with st.spinner("Anonyme Auswahl oder Objekt nicht gefunden. Leite an Hosts weiter..."):
-                execute_transitional_routing(user_input, aktuelles_objekt)
-                st.rerun()
-        else:
-            with st.spinner("Durchsuche Matrix..."):
-                context_str = extract_context_for_object(aktuelles_objekt)
-                
-                # Deterministischer Vorab-Wortabgleich zur Vermeidung von Halluzinationen
-                such_woerter = [w.strip().lower() for w in user_input.split() if len(w.strip()) > 3]
-                wissensluecke_erkannt = False
-                
-                if (such_woerter and not any(w in context_str.lower() for w in such_woerter)) or not context_str.strip():
-                    wissensluecke_erkannt = True
-                
-                if wissensluecke_erkannt:
-                    execute_transitional_routing(user_input, aktuelles_objekt)
-                    st.rerun()
-                else:
-                    ai_response = call_gemini_api(user_input, context_str)
-                    
-                    # Sicherheitsnetz: Falls die KI im Freitext eingesteht etwas nicht zu wissen
-                    luecken_indikatoren = ["keine information", "weiß ich nicht", "nicht hinterlegt", "leider nein", "nicht bekannt", "fehlen mir details"]
-                    if any(ind in ai_response.lower() for ind in luecken_indikatoren):
-                        execute_transitional_routing(user_input, aktuelles_objekt)
-                    else:
-                        st.session_state.messages.append({"role": "assistant", "content": ai_response})
-                    st.rerun()
+    # Nutzer-Nachricht anzeigen und speichern
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
+        
+    # Kontext für Gemini vorbereiten
+    knowledge_str = df_knowledge.to_markdown(index=False) if not df_knowledge.empty else "Keine Daten verfügbar."
     
-    # INPUT-PFAD (Direktes Schreiben in Blau)
-    elif aktuelle_richtung == "INPUT":
-        with st.spinner("Protokolliere Eintrag in der Matrix..."):
-            execute_matrix_input(st.session_state.aktiver_use_case, aktuelles_objekt, user_input)
-            danke_satz = f"Vielen Dank! Ich habe deine Eingabe zum Thema '{st.session_state.aktiver_use_case}' für die Hosts eingetragen."
-            st.session_state.messages.append({"role": "assistant", "content": danke_satz})
-            st.cache_data.clear()
-            st.rerun()
+    system_instruction = VILLA_PROMPT_TEMPLATE.format(
+        role=st.session_state.role,
+        knowledge_data=knowledge_str
+    )
+    
+    # Gemini Modell aufrufen (Nutzt system_instruction für strikte Verhaltensregeln)
+    try:
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-pro",
+            system_instruction=system_instruction
+        )
+        
+        # Chat-Historie für das Modell übersetzen (ohne System-Prompts, da diese oben fixiert sind)
+        chat = model.start_chat(history=[
+            {"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]}
+            for m in st.session_state.messages[:-1]
+        ])
+        
+        # Antwort generieren
+        with st.chat_message("assistant"):
+            response_placeholder = st.empty()
+            response = chat.send_message(user_input)
+            
+            # Antwort anzeigen und speichern
+            response_placeholder.markdown(response.text)
+            st.session_state.messages.append({"role": "assistant", "content": response.text})
+            
+    except Exception as e:
+        st.error(f"Fehler bei der KI-Verarbeitung: {e}")
