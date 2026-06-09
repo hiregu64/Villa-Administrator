@@ -1,6 +1,4 @@
 streamlit
-google-generativeai
+google-genai
 pandas
-gspread
-google-auth
-tabulate
+openpyxl
