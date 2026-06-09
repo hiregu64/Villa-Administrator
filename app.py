@@ -39,9 +39,9 @@ else:
 @st.cache_data(ttl=60) # Cache für 60 Sekunden, um API-Limits zu schonen
 def load_wissensbasis():
     try:
-        # Erstelle Credentials aus den Streamlit Secrets
+        # Erstelle Credentials aus den korrekten Streamlit Secrets (GOOGLE_CREDENTIALS)
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+        creds = Credentials.from_service_account_info(st.secrets["GOOGLE_CREDENTIALS"], scopes=scope)
         client = gspread.authorize(creds)
         
         # Öffne das Spreadsheet (Nutze die ID aus deinem Link)
