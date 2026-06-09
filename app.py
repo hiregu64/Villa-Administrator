@@ -4,6 +4,7 @@ import io
 import datetime
 import openpyxl
 from openpyxl.styles import Font, Alignment
+from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
 from google.oauth2 import service_account
@@ -11,15 +12,26 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 # ==============================================================================
-# 1. KONFIGURATION & INFRASTRUCTURE
+# 1. STRUCTURATED OUTPUT SCHEMA (Laut Spezifikation Kapitel 4.4)
+# ==============================================================================
+class KiAntwortSchema(BaseModel):
+    wissensluecke_erkannt: bool = Field(
+        description="Muss True (1) sein, wenn der bereitgestellte Excel-Kontext die Frage nicht beantwortet oder unvollständig ist. False (0), wenn die Antwort im Text existiert oder logisch abgeleitet werden kann."
+    )
+    antwort_text: str = Field(
+        description="Die smartphone-optimierte, kurze Antwort an den Gast. Bleibe streng bei den Fakten. Wenn wissensluecke_erkannt True ist, formuliere hier eine kurze Standardabsage."
+    )
+
+# ==============================================================================
+# 2. GLOBAL CONFIGURATION & HMI PRESENTATION LAYER
 # ==============================================================================
 st.set_page_config(page_title="Villa Avatar", page_icon="☀️", layout="centered")
 FILE_ID = '1FzhWZuO6aRZkdRuQBzaojhkq7bQDyprl'
 
-# Unverrückbarer Fallback-Satz laut Spezifikation (Kapitel 1.3)
+# Unverrückbarer Fallback-Satz (Kapitel 1.3)
 FALLBACK_SATZ = "Ich habe dazu leider keine Informationen, Ich gebe das aber gern an die Hosts weiter."
 
-# HMI Style-Injektion (Smartphone-Optimierung & asymmetrischer Chat)
+# Asymmetrischer Chat & Smartphone-Optimierung via CSS Injektion
 st.markdown("""
     <style>
     div.stButton > button[kind="primary"] { background-color: #e3f2fd !important; color: #1565c0 !important; border: 1px solid #bbdefb !important; font-weight: bold !important; }
@@ -34,12 +46,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. DATEN-LADE ENGINE (Drei-Blatt-Modell / Spaltenköpfe in Zeile 1)
+# 3. DATEN-LADE ENGINE (Drei-Blatt-Modell mit header=0 laut Spezifikation)
 # ==============================================================================
 @st.cache_data(ttl=30)
 def load_dynamic_data():
     try:
-        # Zugriff über die verifizierte Secret-Struktur
+        # Authentifizierung über den gesetzlich vorgeschriebenen Key (Kapitel 6.4.1)
         creds_dict = st.secrets["GOOGLE_CREDENTIALS"]
         creds = service_account.Credentials.from_service_account_info(creds_dict)
         service = build('drive', 'v3', credentials=creds)
@@ -51,14 +63,14 @@ def load_dynamic_data():
         while done is False: _, done = downloader.next_chunk()
             
         fh.seek(0)
-        # Fixiert: Spaltenköpfe liegen in Zeile 1 (header=0)
+        # Spaltenköpfe fix in Zeile 1
         df_wissen = pd.read_excel(fh, sheet_name="Wissensbasis", header=0)
         fh.seek(0)
         df_lexikon = pd.read_excel(fh, sheet_name="Spalten_Lexikon", header=0)
         fh.seek(0)
         df_usecases = pd.read_excel(fh, sheet_name="UseCase_Lexikon", header=0)
         
-        # Geografische Vererbung (Forward-Fill für verbundene Zellen in 'Wo?')
+        # Geografische Vererbung via Forward-Fill
         if df_wissen is not None and not df_wissen.empty and "Wo?" in df_wissen.columns:
             df_wissen["Wo?"] = df_wissen["Wo?"].ffill()
             
@@ -71,7 +83,7 @@ with st.spinner("Synchronisiere mit der Excel-Zentralmatrix..."):
     df_wissen, df_lexikon, df_usecases, drive_service = load_dynamic_data()
 
 # ==============================================================================
-# 3. KI-INTEGRATION (Offizielles SDK & Striktes Verbotssystem)
+# 4. API-CORE & STRUCTURATED ROUTING ENGINE
 # ==============================================================================
 @st.cache_resource
 def get_ki_client():
@@ -89,27 +101,49 @@ def find_column_by_fuzzy_name(headers, target_name):
             return idx + 1
     return None
 
-def call_gemini_api(prompt, context="", system_context=None):
+def call_gemini_api_structured(prompt, context="", system_context=None):
     client = get_ki_client()
-    if client is None: return "🛑 KI-Schnittstelle nicht konfiguriert."
+    if client is None:
+        # Fallback-Struktur bei fehlender API-Verbindung
+        return KiAntwortSchema(wissensluecke_erkannt=True, antwort_text="🛑 KI-Schnittstelle nicht konfiguriert.")
     
-    # Absolutes Offenbarungsverbot interner Strukturen laut Spezifikation
     sys_instruction = system_context or (
         "Du bist „Villa Avatar“, der digitale Helfer. Antworte immer kurz, freundlich, präzise und smartphone-optimiert. "
-        "Beziehe deine Antworten exakt aus den mitgegebenen Live-Daten. Erfinde niemals Fakten.\n"
-        "ABSOLUTES VERBOT: Erwähne NIEMALS interne Dateinamen, Bildbezeichnungen (wie '.jfif') oder die Struktur der Excel-Tabelle (wie 'Spalte A', 'Überschriften')."
+        "Analysiere den bereitgestellten Excel-Kontext intelligent. Befindet sich die Information zu einer Handlungsfrage implizit im Text "
+        "(z.B. Abläufe nach Verlassen des Hauses), übersetze dies in eine direkte Anweisung für den Gast und setze wissensluecke_erkannt = False.\n"
+        "Wenn das Thema im Kontext überhaupt nicht behandelt wird, setze wissensluecke_erkannt = True.\n"
+        "ABSOLUTES VERBOT: Erwähne NIEMALS interne Dateinamen, Spaltenüberschriften oder die Struktur der Excel-Tabelle."
     )
     full_prompt = f"Kontext aus der verifizierten Wissensbasis:\n{context}\n\nNutzerfrage: {prompt}" if context else prompt
     
     try:
+        # Zwinge die KI über response_schema in das Pydantic-Zustandsmodell bei T=0.2
         response = client.models.generate_content(
             model="gemini-2.5-flash", 
             contents=full_prompt, 
-            config=types.GenerateContentConfig(system_instruction=sys_instruction)
+            config=types.GenerateContentConfig(
+                system_instruction=sys_instruction,
+                temperature=0.2,
+                response_mime_type="application/json",
+                response_schema=KiAntwortSchema
+            )
+        )
+        return KiAntwortSchema.model_validate_json(response.text)
+    except Exception as e:
+        return KiAntwortSchema(wissensluecke_erkannt=True, antwort_text=f"🛑 KI-Fehler: {e}")
+
+def call_gemini_api_raw(prompt, system_context=None):
+    client = get_ki_client()
+    if client is None: return "🛑 KI-Schnittstelle nicht konfiguriert."
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash", 
+            contents=prompt, 
+            config=types.GenerateContentConfig(system_instruction=system_context, temperature=0.2)
         )
         return response.text
     except Exception as e:
-        return f"🛑 KI temporär nicht erreichbar: {e}"
+        return f"🛑 KI-Fehler: {e}"
 
 def extract_context_for_object(objekt_name):
     if df_wissen is None or df_lexikon is None or objekt_name is None: return ""
@@ -134,7 +168,7 @@ def extract_context_for_object(objekt_name):
     return "\n".join(context_parts)
 
 # ==============================================================================
-# 4. ZWEI-WEGE MATRIX-SCHREIBENGINE
+# 5. MATRIZEN-SCHREIBENGINE (openpyxl / Text in Blau #1F4E78 laut Kapitel 6.4.3)
 # ==============================================================================
 def execute_matrix_input(use_case_name, objekt_name, freitext):
     if drive_service is None or df_lexikon is None: return
@@ -187,7 +221,7 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
             
         ziel_zelle = ws.cell(row=ziel_row_idx, column=ziel_col_idx)
         ziel_zelle.value = kompletter_text
-        # Protokollierung zwingend in Blau (#1F4E78) zur Rückverfolgung
+        # Gesetzliche Formatierungsvorgaben (Blau & Zeilenumbruch)
         ziel_zelle.font = Font(color="1F4E78")
         ziel_zelle.alignment = Alignment(wrap_text=True)
         
@@ -254,7 +288,7 @@ def reset_chat_flow():
     st.session_state.messages = []
 
 # ==============================================================================
-# 5. HMI PRESENTATION LAYER (Deterministische Kaskadensteuerung)
+# 6. HMI PRESENTATION LAYER (Deterministische Kaskadenführung)
 # ==============================================================================
 st.title("☀️ Villa Avatar")
 
@@ -291,7 +325,7 @@ if st.session_state.aktive_rolle and df_usecases is not None:
     else:
         erlaubte_buttons = verfuegbare_uc
 
-    # KASKADE 2: Use Cases (Horizontale Aktions-Buttons)
+    # KASKADE 2: Use Cases (Aktions-Buttons)
     cols = st.columns(len(erlaubte_buttons))
     neuer_use_case = st.session_state.aktiver_use_case
     
@@ -363,7 +397,7 @@ if st.session_state.aktive_rolle and df_usecases is not None:
                             break
 
 # ==============================================================================
-# 6. PROCESSING-LAYER & SEMANTISCHES ROUTING (Rein deterministisch)
+# 7. CHAT FLOW & DETERMINISTISCHES ROUTING BASED ON FLAGS
 # ==============================================================================
 if st.session_state.aktiver_use_case and "bericht" in st.session_state.aktiver_use_case.lower() and st.session_state.bericht_filter:
     with st.spinner("Analysiere Datenbasis..."):
@@ -372,7 +406,7 @@ if st.session_state.aktiver_use_case and "bericht" in st.session_state.aktiver_u
             report_output = f"Aktuell liegen keine Einträge für den Filter '{st.session_state.bericht_filter}' vor. ☀️"
         else:
             prompt = f"Du bist der administrative Analyst. Strukturiere diese Matrix-Daten professionell und chronologisch für den Host:\n\n{report_data_str}"
-            report_output = call_gemini_api(prompt, system_context="Liste Fakten auf, nutze Bulletpoints, bleibe sachlich.")
+            report_output = call_gemini_api_raw(prompt, system_context="Liste Fakten auf, nutze Bulletpoints, bleibe sachlich.")
         
         st.session_state.messages.append({"role": "assistant", "content": report_output})
         st.session_state.bericht_filter = None
@@ -390,7 +424,7 @@ if st.session_state.aktiver_use_case and "bericht" not in st.session_state.aktiv
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     user_input = st.session_state.messages[-1]["content"]
     
-    # OUTPUT-RICHTUNG (Suchen & Verifizieren vor KI-Aufruf)
+    # OUTPUT-PFAD (Suchen, Synthetisieren und Verifizieren)
     if aktuelle_richtung == "OUTPUT":
         if aktuelles_objekt is None or aktuelles_objekt == "Nicht gefunden":
             with st.spinner("Transitional Routing aktiv..."):
@@ -400,30 +434,19 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
             with st.spinner("Durchsuche Matrix..."):
                 context_str = extract_context_for_object(aktuelles_objekt)
                 
-                # DETERMINISTISCHE PRÜFUNG: Enthält der Excel-Kontext die Suchbegriffe des Nutzers?
-                such_woerter = [w.strip().lower() for w in user_input.split() if len(w.strip()) > 3]
-                wissensluecke_erkannt = False
+                # Hole die strukturierte Antwort von der KI (inkl. Binär-Flag)
+                structured_response = call_gemini_api_structured(user_input, context_str)
                 
-                if (such_woerter and not any(w in context_str.lower() for w in such_woerter)) or not context_str.strip():
-                    wissensluecke_erkannt = True
-                
-                if wissensluecke_erkannt:
-                    # Direkter Abbruch ohne KI-Risiko
+                # DETERMINISTISCHE ENTSCHEIDUNG IN PYTHON:
+                if structured_response.wissensluecke_erkannt:
+                    # Kontrollierter Abbruch: Schreibe in die Matrix und gib den harten Fallback-Satz aus
                     execute_transitional_routing(user_input, aktuelles_objekt)
-                    st.rerun()
                 else:
-                    # KI wird nur aufgerufen, wenn Daten nachweislich existieren
-                    ai_response = call_gemini_api(user_input, context_str)
-                    
-                    # Zusätzliches Sicherheitsnetz (falls KI im Freitext Lücken eingesteht)
-                    luecken_indikatoren = ["keine information", "weiß ich nicht", "nicht hinterlegt", "leider nein", "nicht bekannt", "fehlen mir details"]
-                    if any(ind in ai_response.lower() for ind in luecken_indikatoren):
-                        execute_transitional_routing(user_input, aktuelles_objekt)
-                    else:
-                        st.session_state.messages.append({"role": "assistant", "content": ai_response})
-                    st.rerun()
+                    # Wissen ist nachweislich vorhanden, zeige den Text an
+                    st.session_state.messages.append({"role": "assistant", "content": structured_response.antwort_text})
+                st.rerun()
     
-    # INPUT-RICHTUNG (Sofortiges Schreiben in die Excel-Matrix)
+    # INPUT-PFAD (Direktes Schreiben in die Matrix)
     elif aktuelle_richtung == "INPUT":
         with st.spinner("Protokolliere Eintrag in der Matrix..."):
             execute_matrix_input(st.session_state.aktiver_use_case, aktuelles_objekt, user_input)
