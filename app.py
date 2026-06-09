@@ -3,6 +3,7 @@ import pandas as pd
 import io
 import datetime
 import openpyxl
+import json
 from openpyxl.styles import Font, Alignment
 from pydantic import BaseModel, Field
 from google import genai
@@ -16,10 +17,10 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 # ==============================================================================
 class KiAntwortSchema(BaseModel):
     wissensluecke_erkannt: bool = Field(
-        description="Muss True (1) sein, wenn der bereitgestellte Excel-Kontext die Frage nicht beantwortet oder unvollständig ist. False (0), wenn die Antwort im Text existiert oder logisch abgeleitet werden kann."
+        description="Muss zwingend True sein, wenn der bereitgestellte Excel-Kontext die Frage nicht direkt beantwortet oder unvollständig ist. False, wenn die Antwort im Text existiert."
     )
     antwort_text: str = Field(
-        description="Die smartphone-optimierte, kurze Antwort an den Gast. Bleibe streng bei den Fakten. Wenn wissensluecke_erkannt True ist, formuliere hier eine kurze Standardabsage."
+        description="Die kurze Antwort an den Gast. Bleibe streng bei den Fakten. ACHTUNG: Wenn wissensluecke_erkannt True ist, MUSS dieses Feld absolut LEER bleiben (Leerstring ''). Formuliere NIEMALS eine eigene Absage!"
     )
 
 # ==============================================================================
@@ -104,20 +105,18 @@ def find_column_by_fuzzy_name(headers, target_name):
 def call_gemini_api_structured(prompt, context="", system_context=None):
     client = get_ki_client()
     if client is None:
-        # Fallback-Struktur bei fehlender API-Verbindung
         return KiAntwortSchema(wissensluecke_erkannt=True, antwort_text="🛑 KI-Schnittstelle nicht konfiguriert.")
     
     sys_instruction = system_context or (
         "Du bist „Villa Avatar“, der digitale Helfer. Antworte immer kurz, freundlich, präzise und smartphone-optimiert. "
-        "Analysiere den bereitgestellten Excel-Kontext intelligent. Befindet sich die Information zu einer Handlungsfrage implizit im Text "
-        "(z.B. Abläufe nach Verlassen des Hauses), übersetze dies in eine direkte Anweisung für den Gast und setze wissensluecke_erkannt = False.\n"
-        "Wenn das Thema im Kontext überhaupt nicht behandelt wird, setze wissensluecke_erkannt = True.\n"
+        "Analysiere den bereitgestellten Excel-Kontext intelligent. Befindet sich die Information zu einer Handlungsfrage implizit im Text, "
+        "übersetze dies in eine direkte Anweisung für den Gast und setze wissensluecke_erkannt = False.\n"
+        "Wenn das Thema im Kontext überhaupt nicht behandelt wird oder unvollständig ist, setze wissensluecke_erkannt = True.\n"
         "ABSOLUTES VERBOT: Erwähne NIEMALS interne Dateinamen, Spaltenüberschriften oder die Struktur der Excel-Tabelle."
     )
     full_prompt = f"Kontext aus der verifizierten Wissensbasis:\n{context}\n\nNutzerfrage: {prompt}" if context else prompt
     
     try:
-        # Zwinge die KI über response_schema in das Pydantic-Zustandsmodell bei T=0.2
         response = client.models.generate_content(
             model="gemini-2.5-flash", 
             contents=full_prompt, 
@@ -128,9 +127,15 @@ def call_gemini_api_structured(prompt, context="", system_context=None):
                 response_schema=KiAntwortSchema
             )
         )
-        return KiAntwortSchema.model_validate_json(response.text)
+        
+        # Sicheres Zurückparsen des JSON-Strings in das typisierte Python-Objekt
+        data = json.loads(response.text)
+        return KiAntwortSchema(
+            wissensluecke_erkannt=bool(data.get("wissensluecke_erkannt", True)),
+            antwort_text=str(data.get("antwort_text", ""))
+        )
     except Exception as e:
-        return KiAntwortSchema(wissensluecke_erkannt=True, antwort_text=f"🛑 KI-Fehler: {e}")
+        return KiAntwortSchema(wissensluecke_erkannt=True, antwort_text="")
 
 def call_gemini_api_raw(prompt, system_context=None):
     client = get_ki_client()
@@ -397,7 +402,7 @@ if st.session_state.aktive_rolle and df_usecases is not None:
                             break
 
 # ==============================================================================
-# 7. CHAT FLOW & DETERMINISTISCHES ROUTING BASED ON FLAGS
+# 7. CHAT FLOW & DETERMINISTISCHES ROUTING (Mit doppeltem Python-Sicherheitsnetz)
 # ==============================================================================
 if st.session_state.aktiver_use_case and "bericht" in st.session_state.aktiver_use_case.lower() and st.session_state.bericht_filter:
     with st.spinner("Analysiere Datenbasis..."):
@@ -434,16 +439,34 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
             with st.spinner("Durchsuche Matrix..."):
                 context_str = extract_context_for_object(aktuelles_objekt)
                 
-                # Hole die strukturierte Antwort von der KI (inkl. Binär-Flag)
+                # Hole die strukturierte Antwort von der KI
                 structured_response = call_gemini_api_structured(user_input, context_str)
                 
+                # Lokale Extraktion für unbestechliche Variablensicherheit
+                ist_luecke = structured_response.wissensluecke_erkannt
+                ki_text = structured_response.antwort_text
+                ki_text_lower = ki_text.lower()
+                
+                # Phrasen-Sicherheitsnetz gegen "versteckte" Absagen im Freitext
+                luecken_phrasen = [
+                    "keine information", 
+                    "weiß ich nicht", 
+                    "nicht hinterlegt", 
+                    "leider nein", 
+                    "nicht bekannt", 
+                    "fehlen mir details",
+                    "gern an die hosts weiter"
+                ]
+                
                 # DETERMINISTISCHE ENTSCHEIDUNG IN PYTHON:
-                if structured_response.wissensluecke_erkannt:
-                    # Kontrollierter Abbruch: Schreibe in die Matrix und gib den harten Fallback-Satz aus
-                    execute_transitional_routing(user_input, aktuelles_objekt)
+                # Pfad schlägt zu, wenn das Flag True ist ODER das Textfeld leer bleibt ODER eine Lücken-Phrase auftaucht
+                if ist_luecke or ki_text == "" or any(phrase in ki_text_lower for phrase in luecken_phrasen):
+                    with st.spinner("Sicherheitsnetz aktiv: Wissenslücke detektiert. Protokolliere..."):
+                        execute_transitional_routing(user_input, aktuelles_objekt)
                 else:
-                    # Wissen ist nachweislich vorhanden, zeige den Text an
-                    st.session_state.messages.append({"role": "assistant", "content": structured_response.antwort_text})
+                    # Wissen existiert nachweislich und fehlerfrei, zeige Antwort an
+                    st.session_state.messages.append({"role": "assistant", "content": ki_text})
+                
                 st.rerun()
     
     # INPUT-PFAD (Direktes Schreiben in die Matrix)
