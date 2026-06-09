@@ -46,13 +46,16 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# Initialisierung der geschäftskritischen Debug-Zustände (Kapitel 6.5)
+if "last_write_status" not in st.session_state: st.session_state.last_write_status = "Noch kein Schreibvorgang ausgelöst."
+if "last_extracted_context" not in st.session_state: st.session_state.last_extracted_context = "Kein Kontext extrahiert."
+
 # ==============================================================================
 # 3. DATEN-LADE ENGINE (Drei-Blatt-Modell mit header=0 laut Spezifikation)
 # ==============================================================================
 @st.cache_data(ttl=30)
 def load_dynamic_data():
     try:
-        # Authentifizierung über den gesetzlich vorgeschriebenen Key (Kapitel 6.4.1)
         creds_dict = st.secrets["GOOGLE_CREDENTIALS"]
         creds = service_account.Credentials.from_service_account_info(creds_dict)
         service = build('drive', 'v3', credentials=creds)
@@ -64,14 +67,12 @@ def load_dynamic_data():
         while done is False: _, done = downloader.next_chunk()
             
         fh.seek(0)
-        # Spaltenköpfe fix in Zeile 1
         df_wissen = pd.read_excel(fh, sheet_name="Wissensbasis", header=0)
         fh.seek(0)
         df_lexikon = pd.read_excel(fh, sheet_name="Spalten_Lexikon", header=0)
         fh.seek(0)
         df_usecases = pd.read_excel(fh, sheet_name="UseCase_Lexikon", header=0)
         
-        # Geografische Vererbung via Forward-Fill
         if df_wissen is not None and not df_wissen.empty and "Wo?" in df_wissen.columns:
             df_wissen["Wo?"] = df_wissen["Wo?"].ffill()
             
@@ -108,7 +109,7 @@ def call_gemini_api_structured(prompt, context="", system_context=None):
         return KiAntwortSchema(wissensluecke_erkannt=True, antwort_text="🛑 KI-Schnittstelle nicht konfiguriert.")
     
     sys_instruction = system_context or (
-        "Du bist „Villa Avatar“, der digitale Helfer. Antworte immer kurz, freundlich, präzise und smartphone-optimiert. "
+        "Du bist „Villa Avatar“, der digitale Helfer. Antworte immer kurz, freundlich, präzise and smartphone-optimiert. "
         "Analysiere den bereitgestellten Excel-Kontext intelligent. Befindet sich die Information zu einer Handlungsfrage implizit im Text, "
         "übersetze dies in eine direkte Anweisung für den Gast und setze wissensluecke_erkannt = False.\n"
         "Wenn das Thema im Kontext überhaupt nicht behandelt wird oder unvollständig ist, setze wissensluecke_erkannt = True.\n"
@@ -128,7 +129,6 @@ def call_gemini_api_structured(prompt, context="", system_context=None):
             )
         )
         
-        # Sicheres Zurückparsen des JSON-Strings in das typisierte Python-Objekt
         data = json.loads(response.text)
         return KiAntwortSchema(
             wissensluecke_erkannt=bool(data.get("wissensluecke_erkannt", True)),
@@ -155,7 +155,9 @@ def extract_context_for_object(objekt_name):
     
     bez_col = df_wissen.columns[0] if "Bezeichnung" not in df_wissen.columns else "Bezeichnung"
     row_match = df_wissen[df_wissen[bez_col].astype(str).str.strip().str.lower() == objekt_name.lower().strip()]
-    if row_match.empty: return ""
+    if row_match.empty: 
+        st.session_state.last_extracted_context = f"Kein Treffer in 'Bezeichnung' für '{objekt_name}'."
+        return ""
     
     lex_spalten_name = df_lexikon.columns[0]
     rolle_idx = 2 if st.session_state.aktive_rolle == "Gast" else 3 
@@ -170,13 +172,17 @@ def extract_context_for_object(objekt_name):
             if pd.notna(val) and str(val).strip() != "":
                 context_parts.append(f"- {col}: {str(val).strip()}")
                 
-    return "\n".join(context_parts)
+    final_context = "\n".join(context_parts)
+    st.session_state.last_extracted_context = final_context
+    return final_context
 
 # ==============================================================================
 # 5. MATRIZEN-SCHREIBENGINE (openpyxl / Text in Blau #1F4E78 laut Kapitel 6.4.3)
 # ==============================================================================
 def execute_matrix_input(use_case_name, objekt_name, freitext):
-    if drive_service is None or df_lexikon is None: return
+    if drive_service is None or df_lexikon is None: 
+        st.session_state.last_write_status = "🛑 Schreibfehler: Drive-Service oder Lexikon nicht geladen."
+        return
     try:
         ziel_objekt = "Nicht gefunden" if (objekt_name is None or objekt_name == "Nicht gefunden") else objekt_name
         
@@ -185,7 +191,7 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
         
         match_lex = df_lexikon[df_lexikon[tag_col_name].astype(str).str.lower().str.strip() == use_case_name.lower().strip()]
         if match_lex.empty:
-            st.error(f"Administrativer Fehler: Kein Tag im Spalten_Lexikon für '{use_case_name}' definiert.")
+            st.session_state.last_write_status = f"🛑 Admin-Fehler: Kein Tag im Spalten_Lexikon für '{use_case_name}'."
             return
             
         physische_zielspalte = match_lex.iloc[0][lex_spalten_name]
@@ -212,10 +218,12 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
                 
         if not ziel_row_idx:
             ziel_row_idx = ws.max_row + 1
-            ws.cell(row=ziel_row_idx, column=col_bez_idx).value = "Nicht gefunden"
+            ws.cell(row=ziel_row_idx, column=col_bez_idx).value = ziel_objekt
             
         ziel_col_idx = find_column_by_fuzzy_name(headers, physische_zielspalte)
-        if not ziel_col_idx: return 
+        if not ziel_col_idx: 
+            st.session_state.last_write_status = f"🛑 Spalte '{physische_zielspalte}' in Excel nicht gefunden!"
+            return 
             
         zeitstempel = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
         nutzer = st.session_state.aktive_rolle
@@ -226,7 +234,6 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
             
         ziel_zelle = ws.cell(row=ziel_row_idx, column=ziel_col_idx)
         ziel_zelle.value = kompletter_text
-        # Gesetzliche Formatierungsvorgaben (Blau & Zeilenumbruch)
         ziel_zelle.font = Font(color="1F4E78")
         ziel_zelle.alignment = Alignment(wrap_text=True)
         
@@ -247,8 +254,11 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
         media = MediaIoBaseUpload(output_stream, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', resumable=True)
         drive_service.files().update(fileId=FILE_ID, media_body=media).execute()
         
+        st.session_state.last_write_status = f"✅ ERFOLG: Zeile {ziel_row_idx}, Spalte '{physische_zielspalte}' beschrieben um {zeitstempel}."
+        st.toast("✅ Excel-Zentralmatrix aktualisiert!")
+        
     except Exception as e:
-        st.error(f"Fehler beim Schreiben in die Zentralmatrix: {e}")
+        st.session_state.last_write_status = f"🛑 GDrive-API-Fehler beim Schreibvorgang: {e}"
 
 def execute_transitional_routing(user_input, objekt_name=None):
     st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
@@ -302,7 +312,6 @@ if "aktiver_use_case" not in st.session_state: st.session_state.aktiver_use_case
 if "messages" not in st.session_state: st.session_state.messages = []
 if "bericht_filter" not in st.session_state: st.session_state.bericht_filter = None
 
-# KASKADE 1: Rollen-Zuweisung
 neue_rolle = st.selectbox("Rolle", options=["Gast", "Host"], index=None, placeholder="Wer bist du?", label_visibility="collapsed")
 if neue_rolle != st.session_state.aktive_rolle:
     st.session_state.aktive_rolle = neue_rolle
@@ -330,7 +339,6 @@ if st.session_state.aktive_rolle and df_usecases is not None:
     else:
         erlaubte_buttons = verfuegbare_uc
 
-    # KASKADE 2: Use Cases (Aktions-Buttons)
     cols = st.columns(len(erlaubte_buttons))
     neuer_use_case = st.session_state.aktiver_use_case
     
@@ -348,7 +356,6 @@ if st.session_state.aktive_rolle and df_usecases is not None:
             if key.startswith("dropdown_"): del st.session_state[key]
         st.rerun()
 
-    # KASKADE 3: Kontextabhängige Dropdowns & Report UI
     if st.session_state.aktiver_use_case:
         uc_row = df_usecases[df_usecases[uc_col].astype(str).str.lower().str.strip() == st.session_state.aktiver_use_case.lower().strip()]
         if not uc_row.empty:
@@ -402,6 +409,24 @@ if st.session_state.aktive_rolle and df_usecases is not None:
                             break
 
 # ==============================================================================
+# 6.5 AKTIVER SYSTEM-DIAGNOSE MONITOR (EINKLAPPBAR LAUT SPEZIFIKATION)
+# ==============================================================================
+st.write("")
+with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR (Laufzeit-Metriken)", expanded=True):
+    d_col1, d_col2 = st.columns(2)
+    with d_col1:
+        st.metric(label="1. Aktive Rolle", value=str(st.session_state.aktive_rolle))
+        st.metric(label="3. Gewähltes Objekt", value=str(aktuelles_objekt))
+    with d_col2:
+        st.metric(label="2. Use Case | Richtung", value=f"{st.session_state.aktiver_use_case} | {aktuelle_richtung}")
+    
+    st.write("**4. Letzter Matrix-Schreibstatus (Feedback/Lücken-Protokoll):**")
+    st.info(st.session_state.last_write_status)
+    
+    st.write("**5. Letzter Kontext-Extrakt für die KI-Schnittstelle:**")
+    st.text_area(label="Matrix-Rohdaten", value=st.session_state.last_extracted_context, height=100, disabled=True, label_visibility="collapsed")
+
+# ==============================================================================
 # 7. CHAT FLOW & DETERMINISTISCHES ROUTING (Mit doppeltem Python-Sicherheitsnetz)
 # ==============================================================================
 if st.session_state.aktiver_use_case and "bericht" in st.session_state.aktiver_use_case.lower() and st.session_state.bericht_filter:
@@ -433,21 +458,18 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
     if aktuelle_richtung == "OUTPUT":
         if aktuelles_objekt is None or aktuelles_objekt == "Nicht gefunden":
             with st.spinner("Transitional Routing aktiv..."):
-                execute_transitional_routing(user_input, aktuelles_objekt)
+                execute_transitional_routing(user_input, "Nicht gefunden")
                 st.rerun()
         else:
             with st.spinner("Durchsuche Matrix..."):
                 context_str = extract_context_for_object(aktuelles_objekt)
                 
-                # Hole die strukturierte Antwort von der KI
                 structured_response = call_gemini_api_structured(user_input, context_str)
                 
-                # Lokale Extraktion für unbestechliche Variablensicherheit
                 ist_luecke = structured_response.wissensluecke_erkannt
                 ki_text = structured_response.antwort_text
                 ki_text_lower = ki_text.lower()
                 
-                # Phrasen-Sicherheitsnetz gegen "versteckte" Absagen im Freitext
                 luecken_phrasen = [
                     "keine information", 
                     "weiß ich nicht", 
@@ -458,13 +480,10 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     "gern an die hosts weiter"
                 ]
                 
-                # DETERMINISTISCHE ENTSCHEIDUNG IN PYTHON:
-                # Pfad schlägt zu, wenn das Flag True ist ODER das Textfeld leer bleibt ODER eine Lücken-Phrase auftaucht
                 if ist_luecke or ki_text == "" or any(phrase in ki_text_lower for phrase in luecken_phrasen):
                     with st.spinner("Sicherheitsnetz aktiv: Wissenslücke detektiert. Protokolliere..."):
                         execute_transitional_routing(user_input, aktuelles_objekt)
                 else:
-                    # Wissen existiert nachweislich und fehlerfrei, zeige Antwort an
                     st.session_state.messages.append({"role": "assistant", "content": ki_text})
                 
                 st.rerun()
