@@ -1,4 +1,7 @@
 streamlit
-google-genai
 pandas
 openpyxl
+pydantic
+google-genai
+google-auth
+google-api-python-client
