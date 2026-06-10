@@ -153,8 +153,9 @@ def call_gemini_api_raw(prompt, system_context=None):
 def extract_context_for_object(objekt_name):
     if df_wissen is None or df_lexikon is None or objekt_name is None: return ""
     
-    # Spaltennamen in der Wissensbasis im Arbeitsspeicher trimmen, um Leerzeichen abzufangen
+    # Spaltennamen im RAM säubern, um unsichtbare Excel-Leerzeichen abzufangen
     df_wissen.columns = [str(c).strip() for c in df_wissen.columns]
+    df_lexikon.columns = [str(c).strip() for c in df_lexikon.columns]
     
     bez_col = df_wissen.columns[0] if "Bezeichnung" not in df_wissen.columns else "Bezeichnung"
     row_match = df_wissen[df_wissen[bez_col].astype(str).str.strip().str.lower() == objekt_name.lower().strip()]
@@ -163,10 +164,21 @@ def extract_context_for_object(objekt_name):
         return ""
     
     lex_spalten_name = df_lexikon.columns[0]
-    rolle_idx = 2 if st.session_state.aktive_rolle == "Gast" else 3 
-    lex_rollen_freigabe = df_lexikon.columns[rolle_idx]
+    aktuelle_rolle = str(st.session_state.get("aktive_rolle", "Gast")).strip().lower()
     
-    mask_ja = df_lexikon[lex_rollen_freigabe].astype(str).str.lower().str.strip() == "ja"
+    # AGNOSTISCHE SPALTENSUCHE: Wir suchen die Spalte, die den Rollennamen (z.B. "gast") enthält
+    rollen_freigabe_spalte = None
+    for col in df_lexikon.columns:
+        if aktuelle_rolle in col.lower():
+            rollen_freigabe_spalte = col
+            break
+            
+    # Fallback, falls keine Spalte matcht (sture Positions-Sicherheit)
+    if not rollen_freigabe_spalte:
+        rollen_freigabe_spalte = df_lexikon.columns[3] if aktuelle_rolle == "gast" else df_lexikon.columns[2]
+    
+    # Filterung der Zeilen auf das kleine "ja" (inklusive Case-Insensitive & Strip)
+    mask_ja = df_lexikon[rollen_freigabe_spalte].astype(str).str.lower().str.strip() == "ja"
     freigegebene_tags = df_lexikon[mask_ja][lex_spalten_name].astype(str).str.strip().tolist()
     
     context_parts = [f"Informationen zum Objekt: {objekt_name}"]
@@ -179,12 +191,12 @@ def extract_context_for_object(objekt_name):
                 
     final_context = "\n".join(context_parts)
     
+    # Protokollierung für den Diagnose-Monitor
     if len(context_parts) <= 1:
         st.session_state.last_extracted_context = (
             f"⚠️ Objekt '{objekt_name}' gefunden, aber keine Spalte freigegeben.\n"
-            f"Rolle: {st.session_state.aktive_rolle}\n"
-            f"Verfügbare Matrix-Spalten: {list(df_wissen.columns)}\n"
-            f"Freigegebene Lexikon-Spalten: {freigegebene_tags}"
+            f"Rolle: {st.session_state.aktive_rolle} (Ausgewertete Spalte: '{rollen_freigabe_spalte}')\n"
+            f"Gefundene Freigabe-Tags: {freigegebene_tags}"
         )
     else:
         st.session_state.last_extracted_context = final_context
@@ -433,7 +445,9 @@ if st.session_state.aktive_rolle and df_usecases is not None:
                             aktuelles_objekt = val
                             break
 
-# --- BEGINN: KAPITEL 6.5 HARDCODED DIAGNOSE-BLOCK ---
+# ==============================================================================
+# 6.5 AKTIVER SYSTEM-DIAGNOSE MONITOR (VOLLE ENTKOPPLUNG LAUT SPEZIFIKATION)
+# ==============================================================================
 st.write("")
 with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR (Laufzeit-Metriken)", expanded=True):
     d_col1, d_col2 = st.columns(2)
@@ -443,8 +457,8 @@ with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR (Laufzeit-Metriken)", expanded=Tr
     with d_col2:
         st.metric(label="2. Use Case | Richtung", value=f"{st.session_state.get('aktiver_use_case')} | {aktuelle_richtung}")
     
-    # Dynamische Ermittlung des Spaltennamens aus Zeile 1 des Lexikons für den Monitor
-    target_display_name = "Details Nutzung [Output]"
+    # Ermittlung des Spaltennamens aus Zeile 1 des Lexikons für die Anzeige im Monitor
+    target_display_name = "Details Nutzung"
     if df_lexikon is not None and not df_lexikon.empty:
         target_display_name = str(df_lexikon.iloc[0, 0]).strip()
         
@@ -459,7 +473,6 @@ with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR (Laufzeit-Metriken)", expanded=Tr
     
     st.write("**6. Letzter Kontext-Extrakt (KI-Input):**")
     st.text_area(label="Matrix-Rohdaten", value=st.session_state.get("last_extracted_context", ""), height=100, disabled=True, label_visibility="collapsed")
-# --- ENDE: KAPITEL 6.5 HARDCODED DIAGNOSE-BLOCK ---
 
 # ==============================================================================
 # 7. CHAT FLOW & DETERMINISTISCHES ROUTING (Mit doppeltem Python-Sicherheitsnetz)
