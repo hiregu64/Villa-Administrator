@@ -153,6 +153,9 @@ def call_gemini_api_raw(prompt, system_context=None):
 def extract_context_for_object(objekt_name):
     if df_wissen is None or df_lexikon is None or objekt_name is None: return ""
     
+    # Spaltennamen in der Wissensbasis im Arbeitsspeicher trimmen, um Leerzeichen abzufangen
+    df_wissen.columns = [str(c).strip() for c in df_wissen.columns]
+    
     bez_col = df_wissen.columns[0] if "Bezeichnung" not in df_wissen.columns else "Bezeichnung"
     row_match = df_wissen[df_wissen[bez_col].astype(str).str.strip().str.lower() == objekt_name.lower().strip()]
     if row_match.empty: 
@@ -163,17 +166,29 @@ def extract_context_for_object(objekt_name):
     rolle_idx = 2 if st.session_state.aktive_rolle == "Gast" else 3 
     lex_rollen_freigabe = df_lexikon.columns[rolle_idx]
     
-    freigegebene_tags = df_lexikon[df_lexikon[lex_rollen_freigabe].astype(str).str.lower().str.strip() == "ja"][lex_spalten_name].tolist()
+    mask_ja = df_lexikon[lex_rollen_freigabe].astype(str).str.lower().str.strip() == "ja"
+    freigegebene_tags = df_lexikon[mask_ja][lex_spalten_name].astype(str).str.strip().tolist()
     
     context_parts = [f"Informationen zum Objekt: {objekt_name}"]
     for col in df_wissen.columns:
-        if col in freigegebene_tags and col in row_match.columns:
+        is_freigegeben = any(col.lower() == tag.lower() for tag in freigegebene_tags)
+        if is_freigegeben and col in row_match.columns:
             val = row_match.iloc[0][col]
             if pd.notna(val) and str(val).strip() != "":
                 context_parts.append(f"- {col}: {str(val).strip()}")
                 
     final_context = "\n".join(context_parts)
-    st.session_state.last_extracted_context = final_context
+    
+    if len(context_parts) <= 1:
+        st.session_state.last_extracted_context = (
+            f"⚠️ Objekt '{objekt_name}' gefunden, aber keine Spalte freigegeben.\n"
+            f"Rolle: {st.session_state.aktive_rolle}\n"
+            f"Verfügbare Matrix-Spalten: {list(df_wissen.columns)}\n"
+            f"Freigegebene Lexikon-Spalten: {freigegebene_tags}"
+        )
+    else:
+        st.session_state.last_extracted_context = final_context
+        
     return final_context
 
 # ==============================================================================
@@ -193,7 +208,7 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
         for _, row in df_lexikon.iterrows():
             tags_in_row = [t.strip().lower() for t in str(row[tag_col_name]).split(',')]
             if use_case_name.lower().strip() in tags_in_row:
-                physische_zielspalte = row[lex_spalten_name]
+                physische_zielspalte = str(row[lex_spalten_name]).strip()
                 break
         
         if not physische_zielspalte:
@@ -428,12 +443,16 @@ with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR (Laufzeit-Metriken)", expanded=Tr
     with d_col2:
         st.metric(label="2. Use Case | Richtung", value=f"{st.session_state.get('aktiver_use_case')} | {aktuelle_richtung}")
     
-    # --- Live-Validierung des Lesestatus (Erweiterung Spalte: Details Nutzung [Output]) ---
-    st.write("**4. Letzter Matrix-Lesestatus Spalte 'Details Nutzung [Output]':**")
+    # Dynamische Ermittlung des Spaltennamens aus Zeile 1 des Lexikons für den Monitor
+    target_display_name = "Details Nutzung [Output]"
+    if df_lexikon is not None and not df_lexikon.empty:
+        target_display_name = str(df_lexikon.iloc[0, 0]).strip()
+        
+    st.write(f"**4. Letzter Matrix-Lesestatus Spalte '{target_display_name}':**")
     if df_wissen is not None and not df_wissen.empty:
         st.success(f"✅ Daten erfolgreich geladen ({len(df_wissen)} Objekte in Matrix verifiziert)")
     else:
-        st.error("🛑 Lesefehler: Spalte 'Details Nutzung [Output]' nicht synchronisiert.")
+        st.error(f"🛑 Lesefehler: Spalte '{target_display_name}' nicht synchronisiert.")
     
     st.write("**5. Letzter Matrix-Schreibstatus:**")
     st.info(st.session_state.get("last_write_status", "Kein Status"))
