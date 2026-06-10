@@ -20,7 +20,7 @@ class KiAntwortSchema(BaseModel):
         description="Muss zwingend True sein, wenn der bereitgestellte Excel-Kontext die Frage nicht direkt beantwortet oder unvollständig ist. False, wenn die Antwort im Text existiert."
     )
     antwort_text: str = Field(
-        description="Die Antwort an den Gast. Bleibe streng bei den Fakten. ACHTUNG: Wenn wissensluecke_erkannt True ist, MUSS dieses Feld absolut LEER bleiben (Leerstring ''). Formuliere NIEMALS eine eigene Absage!"
+        description="Die kurze Antwort an den Gast. Bleibe streng bei den Fakten. ACHTUNG: Wenn wissensluecke_erkannt True ist, MUSS dieses Feld absolut LEER bleiben (Leerstring ''). Formuliere NIEMALS eine eigene Absage!"
     )
 
 # ==============================================================================
@@ -109,7 +109,7 @@ def call_gemini_api_structured(prompt, context="", system_context=None):
         return KiAntwortSchema(wissensluecke_erkannt=True, antwort_text="🛑 KI-Schnittstelle nicht konfiguriert.")
     
     sys_instruction = system_context or (
-        "Du bist „Villa Avatar“, der digitale Helfer. Antworte immer kurz, freundlich, präzise and smartphone-optimiert. "
+        "Du bist „Villa Avatar“, der digitale Helfer. Antworte immer kurz, freundlich, präzise und smartphone-optimiert. "
         "Analysiere den bereitgestellten Excel-Kontext intelligent. Befindet sich die Information zu einer Handlungsfrage implizit im Text, "
         "übersetze dies in eine direkte Anweisung für den Gast und setze wissensluecke_erkannt = False.\n"
         "Wenn das Thema im Kontext überhaupt nicht behandelt wird oder unvollständig ist, setze wissensluecke_erkannt = True.\n"
@@ -189,7 +189,6 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
         tag_col_name = df_lexikon.columns[4]
         lex_spalten_name = df_lexikon.columns[0]
         
-        # Flexibler Match per Komma-Trennung (Spezifikations-Erweiterung)
         physische_zielspalte = None
         for _, row in df_lexikon.iterrows():
             tags_in_row = [t.strip().lower() for t in str(row[tag_col_name]).split(',')]
@@ -197,7 +196,6 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
                 physische_zielspalte = row[lex_spalten_name]
                 break
         
-        # Sicherheitsnetz, falls das Tag komplett fehlt (z. B. "Keine Information" im Fallback)
         if not physische_zielspalte:
             if use_case_name == "Keine Information":
                 for col in df_wissen.columns:
@@ -420,23 +418,29 @@ if st.session_state.aktive_rolle and df_usecases is not None:
                             aktuelles_objekt = val
                             break
 
-# ==============================================================================
-# 6.5 AKTIVER SYSTEM-DIAGNOSE MONITOR (EINKLAPPBAR LAUT SPEZIFIKATION)
-# ==============================================================================
+# --- BEGINN: KAPITEL 6.5 HARDCODED DIAGNOSE-BLOCK ---
 st.write("")
 with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR (Laufzeit-Metriken)", expanded=True):
     d_col1, d_col2 = st.columns(2)
     with d_col1:
-        st.metric(label="1. Aktive Rolle", value=str(st.session_state.aktive_rolle))
+        st.metric(label="1. Aktive Rolle", value=str(st.session_state.get("aktive_rolle", "None")))
         st.metric(label="3. Gewähltes Objekt", value=str(aktuelles_objekt))
     with d_col2:
-        st.metric(label="2. Use Case | Richtung", value=f"{st.session_state.aktiver_use_case} | {aktuelle_richtung}")
+        st.metric(label="2. Use Case | Richtung", value=f"{st.session_state.get('aktiver_use_case')} | {aktuelle_richtung}")
     
-    st.write("**4. Letzter Matrix-Schreibstatus (Feedback/Lücken-Protokoll):**")
-    st.info(st.session_state.last_write_status)
+    # --- Live-Validierung des Lesestatus (Erweiterung Spalte: Details Nutzung [Output]) ---
+    st.write("**4. Letzter Matrix-Lesestatus Spalte 'Details Nutzung [Output]':**")
+    if df_wissen is not None and not df_wissen.empty:
+        st.success(f"✅ Daten erfolgreich geladen ({len(df_wissen)} Objekte in Matrix verifiziert)")
+    else:
+        st.error("🛑 Lesefehler: Spalte 'Details Nutzung [Output]' nicht synchronisiert.")
     
-    st.write("**5. Letzter Kontext-Extrakt für die KI-Schnittstelle:**")
-    st.text_area(label="Matrix-Rohdaten", value=st.session_state.last_extracted_context, height=100, disabled=True, label_visibility="collapsed")
+    st.write("**5. Letzter Matrix-Schreibstatus:**")
+    st.info(st.session_state.get("last_write_status", "Kein Status"))
+    
+    st.write("**6. Letzter Kontext-Extrakt (KI-Input):**")
+    st.text_area(label="Matrix-Rohdaten", value=st.session_state.get("last_extracted_context", ""), height=100, disabled=True, label_visibility="collapsed")
+# --- ENDE: KAPITEL 6.5 HARDCODED DIAGNOSE-BLOCK ---
 
 # ==============================================================================
 # 7. CHAT FLOW & DETERMINISTISCHES ROUTING (Mit doppeltem Python-Sicherheitsnetz)
