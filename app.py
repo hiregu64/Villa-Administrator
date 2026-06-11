@@ -51,7 +51,7 @@ if "last_write_status" not in st.session_state: st.session_state.last_write_stat
 if "last_extracted_context" not in st.session_state: st.session_state.last_extracted_context = "Kein Kontext extrahiert."
 
 # ==============================================================================
-# 3. DATEN-LADE ENGINE (Drei-Blatt-Modell mit header=0 laut Spezifikation)
+# 3. DATEN-LADE ENGINE (Vier-Blatt-Modell mit header=0 laut Spezifikation)
 # ==============================================================================
 @st.cache_data(ttl=30)
 def load_dynamic_data():
@@ -72,21 +72,29 @@ def load_dynamic_data():
         df_lexikon = pd.read_excel(fh, sheet_name="Spalten_Lexikon", header=0)
         fh.seek(0)
         df_usecases = pd.read_excel(fh, sheet_name="UseCase_Lexikon", header=0)
+        fh.seek(0)
+        
+        try:
+            df_passwoerter = pd.read_excel(fh, sheet_name="Passwörter", header=0)
+        except Exception:
+            df_passwoerter = None
         
         if df_wissen is not None and not df_wissen.empty and "Wo?" in df_wissen.columns:
             df_wissen["Wo?"] = df_wissen["Wo?"].ffill()
             
-        return df_wissen, df_lexikon, df_usecases, service
+        return df_wissen, df_lexikon, df_usecases, df_passwoerter, service
     except Exception as e:
         st.error(f"Kritischer Fehler beim Laden der Datenspezifikation: {e}")
-        return None, None, None, None
+        return None, None, None, None, None
 
 with st.spinner("Synchronisiere mit der Excel-Zentralmatrix..."):
-    df_wissen, df_lexikon, df_usecases, drive_service = load_dynamic_data()
+    df_wissen, df_lexikon, df_usecases, df_passwoerter, drive_service = load_dynamic_data()
 
-# Clean strings in df_usecases columns if available
+# Strings und Spaltennamen in den DataFrames strikt säubern
 if df_usecases is not None and not df_usecases.empty:
     df_usecases.columns = [str(c).strip() for c in df_usecases.columns]
+if df_passwoerter is not None and not df_passwoerter.empty:
+    df_passwoerter.columns = [str(c).strip() for c in df_passwoerter.columns]
 
 # ==============================================================================
 # 4. API-CORE & STRUCTURATED ROUTING ENGINE
@@ -245,7 +253,7 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
                 return
             
         request = drive_service.files().get_media(fileId=FILE_ID)
-        fh = io.BytesIO()
+        fh = ioBytesIO()
         downloader = MediaIoBaseDownload(fh, request)
         done = False
         while not done: _, done = downloader.next_chunk()
@@ -359,17 +367,71 @@ if "aktive_rolle" not in st.session_state: st.session_state.aktive_rolle = None
 if "aktiver_use_case" not in st.session_state: st.session_state.aktiver_use_case = None
 if "messages" not in st.session_state: st.session_state.messages = []
 if "bericht_filter" not in st.session_state: st.session_state.bericht_filter = None
+if "host_authentifiziert" not in st.session_state: st.session_state.host_authentifiziert = False
+if "debug_modus_aktiv" not in st.session_state: st.session_state.debug_modus_aktiv = False
 
 neue_rolle = st.selectbox("Rolle", options=["Gast", "Host"], index=None, placeholder="Wer bist du?", label_visibility="collapsed")
 if neue_rolle != st.session_state.aktive_rolle:
     st.session_state.aktive_rolle = neue_rolle
     st.session_state.aktiver_use_case = None
     st.session_state.bericht_filter = None
+    st.session_state.host_authentifiziert = False
+    st.session_state.debug_modus_aktiv = False
     st.session_state.messages = []
     for key in list(st.session_state.keys()):
         if key.startswith("dropdown_"): del st.session_state[key]
     st.rerun()
 
+# DYNAMISCHE PASSWORT-ABFRAGE LOGIK
+if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
+    st.write("---")
+    pwd_input = st.text_input("🔑 Bitte Passwort für Host-Sicht eingeben:", type="password")
+    
+    if pwd_input:
+        if df_passwoerter is not None and not df_passwoerter.empty:
+            # 1. Spalten-Koordinaten DYNAMISCH über die Reihenfolge aus Excel beziehen
+            p_rolle_col = df_passwoerter.columns[0]  # Spalte 1 (z.B. Rolle)
+            p_pwd_col = df_passwoerter.columns[1]    # Spalte 2 (z.B. Passwort)
+            p_func_col = df_passwoerter.columns[2] if len(df_passwoerter.columns) > 2 else None  # Spalte 3 (z.B. Funktion)
+            
+            # 2. Such-Kriterium dynamisch aus dem ersten Eintrag der ersten Zeile ableiten
+            # Verhindert Hardcoding des Strings 'Host'
+            erster_rollen_eintrag = str(df_passwoerter.iloc[0][p_rolle_col]).strip()
+            
+            # Zeilen filtern, die dem Kriterium entsprechen
+            host_rows = df_passwoerter[df_passwoerter[p_rolle_col].astype(str).str.strip().str.lower() == erster_rollen_eintrag.lower()]
+            
+            treffer_gefunden = False
+            for _, row in host_rows.iterrows():
+                gespeichertes_pwd = str(row[p_pwd_col]).strip()
+                if pwd_input.strip() == gespeichertes_pwd:
+                    st.session_state.host_authentifiziert = True
+                    treffer_gefunden = True
+                    
+                    # 3. Funktion dynamisch prüfen (liest den Wert direkt aus Spalte 3)
+                    if p_func_col and pd.notna(row[p_func_col]):
+                        # Ermittelt die Funktion dynamisch aus der zweiten Zeile für Debug
+                        # Verhindert Hardcoding des Strings 'Debug'
+                        debug_kriterium = "debug"
+                        if len(host_rows) > 1:
+                            debug_kriterium = str(host_rows.iloc[1][p_func_col]).strip().lower()
+                        
+                        funktion_wert = str(row[p_func_col]).strip().lower()
+                        if funktion_wert == debug_kriterium:
+                            st.session_state.debug_modus_aktiv = True
+                    break
+            
+            if treffer_gefunden:
+                st.success("Erfolgreich eingeloggt!")
+                st.rerun()
+            else:
+                st.error("❌ Falsches Passwort. Zugriff verweigert.")
+        else:
+            st.error("🛑 Passwort-Matrix 'Passwörter' nicht geladen oder leer. Bitte Admin kontaktieren.")
+            
+    st.stop()
+
+# AB HIER STARTET DER FREIGEGEBENE BEREICH
 aktuelles_objekt = None
 aktuelle_richtung = None
 
@@ -478,32 +540,33 @@ if st.session_state.aktive_rolle and df_usecases is not None:
                             break
 
 # ==============================================================================
-# 6.5 AKTIVER SYSTEM-DIAGNOSE MONITOR (VOLLE ENTKOPPLUNG LAUT SPEZIFIKATION)
+# 6.5 SYSTEM-DIAGNOSE MONITOR (NUR SICHTBAR WENN DER ADMIN-DEBUG-MODUS AKTIV IST)
 # ==============================================================================
-st.write("")
-with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR (Laufzeit-Metriken)", expanded=True):
-    d_col1, d_col2 = st.columns(2)
-    with d_col1:
-        st.metric(label="1. Aktive Rolle", value=str(st.session_state.get("aktive_rolle", "None")))
-        st.metric(label="3. Gewähltes Objekt", value=str(aktuelles_objekt))
-    with d_col2:
-        st.metric(label="2. Use Case | Richtung", value=f"{st.session_state.get('aktiver_use_case')} | {aktuelle_richtung}")
-    
-    target_display_name = "Details Nutzung"
-    if df_lexikon is not None and not df_lexikon.empty:
-        target_display_name = str(df_lexikon.iloc[0, 0]).strip()
+if st.session_state.debug_modus_aktiv:
+    st.write("")
+    with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR (Laufzeit-Metriken)", expanded=True):
+        d_col1, d_col2 = st.columns(2)
+        with d_col1:
+            st.metric(label="1. Aktive Rolle", value=str(st.session_state.get("aktive_rolle", "None")))
+            st.metric(label="3. Gewähltes Objekt", value=str(aktuelles_objekt))
+        with d_col2:
+            st.metric(label="2. Use Case | Richtung", value=f"{st.session_state.get('aktiver_use_case')} | {aktuelle_richtung}")
         
-    st.write(f"**4. Letzter Matrix-Lesestatus Spalte '{target_display_name}':**")
-    if df_wissen is not None and not df_wissen.empty:
-        st.success(f"✅ Daten erfolgreich geladen ({len(df_wissen)} Objekte in Matrix verifiziert)")
-    else:
-        st.error(f"🛑 Lesefehler: Spalte '{target_display_name}' nicht synchronisiert.")
-    
-    st.write("**5. Letzter Matrix-Schreibstatus:**")
-    st.info(st.session_state.get("last_write_status", "Kein Status"))
-    
-    st.write("**6. Letzter Kontext-Extrakt (KI-Input):**")
-    st.text_area(label="Matrix-Rohdaten", value=st.session_state.get("last_extracted_context", ""), height=100, disabled=True, label_visibility="collapsed")
+        target_display_name = "Details Nutzung"
+        if df_lexikon is not None and not df_lexikon.empty:
+            target_display_name = str(df_lexikon.iloc[0, 0]).strip()
+            
+        st.write(f"**4. Letzter Matrix-Lesestatus Spalte '{target_display_name}':**")
+        if df_wissen is not None and not df_wissen.empty:
+            st.success(f"✅ Daten erfolgreich geladen ({len(df_wissen)} Objekte in Matrix verifiziert)")
+        else:
+            st.error(f"🛑 Lesefehler: Spalte '{target_display_name}' nicht synchronisiert.")
+        
+        st.write("**5. Letzter Matrix-Schreibstatus:**")
+        st.info(st.session_state.get("last_write_status", "Kein Status"))
+        
+        st.write("**6. Letzter Kontext-Extrakt (KI-Input):**")
+        st.text_area(label="Matrix-Rohdaten", value=st.session_state.get("last_extracted_context", ""), height=100, disabled=True, label_visibility="collapsed")
 
 # ==============================================================================
 # 7. CHAT FLOW & DETERMINISTISCHES ROUTING (Mit doppeltem Python-Sicherheitsnetz)
