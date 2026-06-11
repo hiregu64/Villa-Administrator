@@ -166,40 +166,52 @@ def extract_context_for_object(objekt_name):
         st.session_state.last_extracted_context = f"Kein Treffer in 'Bezeichnung' für '{objekt_name}'."
         return ""
     
-    lex_spalten_name = df_lexikon.columns[0]
     aktuelle_rolle = str(st.session_state.get("aktive_rolle", "Gast")).strip().lower()
-    
-    rollen_freigabe_spalte = None
-    for col in df_lexikon.columns:
-        if aktuelle_rolle in col.lower():
-            rollen_freigabe_spalte = col
-            break
-            
-    if not rollen_freigabe_spalte:
-        rollen_freigabe_spalte = df_lexikon.columns[3] if aktuelle_rolle == "gast" else df_lexikon.columns[2]
-    
-    mask_ja = df_lexikon[rollen_freigabe_spalte].astype(str).str.lower().str.strip() == "ja"
-    freigegebene_tags = df_lexikon[mask_ja][lex_spalten_name].astype(str).str.strip().tolist()
-    
     context_parts = [f"Informationen zum Objekt: {objekt_name}"]
-    for col in df_wissen.columns:
-        is_freigegeben = any(col.lower() == tag.lower() for tag in freigegebene_tags)
-        if is_freigegeben and col in row_match.columns:
-            val = row_match.iloc[0][col]
-            if pd.notna(val) and str(val).strip() != "":
-                context_parts.append(f"- {col}: {str(val).strip()}")
+
+    # FALL 1: Der Nutzer ist Host -> Sieht bedingungslos JEDE Spalte aus der Wissensbasis
+    if aktuelle_rolle == "host":
+        for col in df_wissen.columns:
+            if col != bez_col and "status" not in col.lower() and col.lower() != "wo?":
+                val = row_match.iloc[0][col]
+                if pd.notna(val) and str(val).strip() != "":
+                    context_parts.append(f"- {col}: {str(val).strip()}")
+        
+        st.session_state.last_extracted_context = "\n".join(context_parts)
+
+    # FALL 2: Der Nutzer ist Gast -> Filterung streng nach dem Spalten_Lexikon
+    else:
+        lex_spalten_name = df_lexikon.columns[0]
+        
+        gast_freigabe_spalte = None
+        for col in df_lexikon.columns:
+            if "gast" in col.lower():
+                gast_freigabe_spalte = col
+                break
+        
+        if not gast_freigabe_spalte:
+            gast_freigabe_spalte = df_lexikon.columns[3] if len(df_lexikon.columns) > 3 else df_lexikon.columns[-1]
+        
+        mask_ja = df_lexikon[gast_freigabe_spalte].astype(str).str.lower().str.strip() == "ja"
+        freigegebene_tags = df_lexikon[mask_ja][lex_spalten_name].astype(str).str.strip().tolist()
+        
+        for col in df_wissen.columns:
+            is_freigegeben = any(col.lower() == tag.lower() for tag in freigegebene_tags)
+            if is_freigegeben and col in row_match.columns:
+                val = row_match.iloc[0][col]
+                if pd.notna(val) and str(val).strip() != "":
+                    context_parts.append(f"- {col}: {str(val).strip()}")
+                    
+        if len(context_parts) <= 1:
+            st.session_state.last_extracted_context = (
+                f"⚠️ Objekt '{objekt_name}' gefunden, aber keine Spalte für den Gast freigegeben.\n"
+                f"Ausgewertete Lexikon-Spalte: '{gast_freigabe_spalte}'\n"
+                f"Gefundene Freigabe-Tags: {freigegebene_tags}"
+            )
+        else:
+            st.session_state.last_extracted_context = "\n".join(context_parts)
                 
     final_context = "\n".join(context_parts)
-    
-    if len(context_parts) <= 1:
-        st.session_state.last_extracted_context = (
-            f"⚠️ Objekt '{objekt_name}' gefunden, aber keine Spalte freigegeben.\n"
-            f"Rolle: {st.session_state.aktive_rolle} (Ausgewertete Spalte: '{rollen_freigabe_spalte}')\n"
-            f"Gefundene Freigabe-Tags: {freigegebene_tags}"
-        )
-    else:
-        st.session_state.last_extracted_context = final_context
-        
     return final_context
 
 # ==============================================================================
@@ -361,19 +373,16 @@ if neue_rolle != st.session_state.aktive_rolle:
 aktuelles_objekt = None
 aktuelle_richtung = None
 
-# Platzhalter-Variablen für dynamische Texte aus Excel initialisieren
 chat_abfrage_text = "Wie kann ich dir helfen?"
 danke_text_template = "Vielen Dank! Ich habe deine Eingabe zum Thema '{use_case}' für die Hosts eingetragen."
 
 if st.session_state.aktive_rolle and df_usecases is not None:
     st.write("---")
     
-    # Ermittlung der Spaltenüberschriften aus der Excel-Struktur
     uc_col = df_usecases.columns[0]     # UseCase Name
     dir_col = df_usecases.columns[1]    # Richtung
     hmi_col = df_usecases.columns[2]    # HMI Sichtbarkeit Gast
     
-    # NEU: Zusätzliche Spalten für die dynamischen HMI-Texte sicher auslesen
     btn_col = df_usecases.columns[3] if len(df_usecases.columns) > 3 else None
     prompt_col = df_usecases.columns[4] if len(df_usecases.columns) > 4 else None
     danke_col = df_usecases.columns[5] if len(df_usecases.columns) > 5 else None
@@ -393,7 +402,6 @@ if st.session_state.aktive_rolle and df_usecases is not None:
         with cols[idx]:
             is_active = (st.session_state.aktiver_use_case == uc_name)
             
-            # Dynamischen Button-Text ermitteln (Falls in Spalte 4 definiert)
             button_label = uc_name
             if btn_col:
                 btn_match = df_usecases[df_usecases[uc_col].astype(str).str.strip() == str(uc_name).strip()]
@@ -416,11 +424,9 @@ if st.session_state.aktive_rolle and df_usecases is not None:
         if not uc_row.empty:
             aktuelle_richtung = str(uc_row.iloc[0][dir_col]).strip().upper()
             
-            # Dynamischen Prompt/Abfragetext aus Spalte 5 (falls vorhanden) laden
             if prompt_col and pd.notna(uc_row.iloc[0][prompt_col]):
                 chat_abfrage_text = str(uc_row.iloc[0][prompt_col]).strip()
                 
-            # Dynamischen Dankestext aus Spalte 6 (falls vorhanden) laden
             if danke_col and pd.notna(uc_row.iloc[0][danke_col]):
                 danke_text_template = str(uc_row.iloc[0][danke_col]).strip()
             
@@ -443,7 +449,6 @@ if st.session_state.aktive_rolle and df_usecases is not None:
                 with b_col6:
                     if st.button("📋 Gesamtübersicht", use_container_width=True): st.session_state.bericht_filter = "gesamtuebersicht"; st.rerun()
             else:
-                # DIE DREI ORIGINAL-DROPDOWNS (Werden komplett unverändert generiert)
                 STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
                 if df_wissen is not None and not df_wissen.empty:
                     bez_spalte = df_wissen.columns[0] if "Bezeichnung" not in df_wissen.columns else "Bezeichnung"
@@ -521,7 +526,6 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
 if st.session_state.aktiver_use_case and "bericht" not in st.session_state.aktiver_use_case.lower():
-    # Hier wird der dynamische Abfragetext verwendet
     if user_input := st.chat_input(chat_abfrage_text):
         st.session_state.messages.append({"role": "user", "content": user_input})
         st.rerun()
@@ -532,7 +536,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
     # OUTPUT-PFAD (Suchen, Synthetisieren und Verifizieren)
     if aktuelle_richtung == "OUTPUT":
         if aktuelles_objekt is None or aktuelles_objekt == "Nicht gefunden":
-            with st.spinner("Transitional Routing aktiv..."):
+            with st.spinner("Transitional Routing active..."):
                 execute_transitional_routing(user_input, "Nicht gefunden")
                 st.rerun()
         else:
@@ -568,7 +572,6 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
         with st.spinner("Protokolliere Eintrag in der Matrix..."):
             execute_matrix_input(st.session_state.aktiver_use_case, aktuelles_objekt, user_input)
             
-            # Hier wird der dynamische Dankestext verwendet und der Use Case formatiert
             danke_satz = danke_text_template.replace("{use_case}", st.session_state.aktiver_use_case)
             
             st.session_state.messages.append({"role": "assistant", "content": danke_satz})
