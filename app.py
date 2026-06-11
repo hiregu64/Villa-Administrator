@@ -74,8 +74,9 @@ def load_dynamic_data():
         df_usecases = pd.read_excel(fh, sheet_name="UseCase_Lexikon", header=0)
         fh.seek(0)
         
+        # EXAKTE ANPASSUNG: Lädt jetzt gezielt den Reiter "Passwort_Lexikon"
         try:
-            df_passwoerter = pd.read_excel(fh, sheet_name="Passwörter", header=0)
+            df_passwoerter = pd.read_excel(fh, sheet_name="Passwort_Lexikon", header=0)
         except Exception:
             df_passwoerter = None
         
@@ -253,7 +254,7 @@ def execute_matrix_input(use_case_name, objekt_name, freitext):
                 return
             
         request = drive_service.files().get_media(fileId=FILE_ID)
-        fh = ioBytesIO()
+        fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
         done = False
         while not done: _, done = downloader.next_chunk()
@@ -382,38 +383,38 @@ if neue_rolle != st.session_state.aktive_rolle:
         if key.startswith("dropdown_"): del st.session_state[key]
     st.rerun()
 
-# DYNAMISCHE PASSWORT-ABFRAGE LOGIK
+# VOLKMEN DYNAMISCHE PASSWORT-ABFRAGE AUS DEM REITER "Passwort_Lexikon"
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     st.write("---")
     pwd_input = st.text_input("🔑 Bitte Passwort für Host-Sicht eingeben:", type="password")
     
     if pwd_input:
         if df_passwoerter is not None and not df_passwoerter.empty:
-            # 1. Spalten-Koordinaten DYNAMISCH über die Reihenfolge aus Excel beziehen
+            # 1. Spalten-Köpfe anhand der physischen Struktur bestimmen
             p_rolle_col = df_passwoerter.columns[0]  # Spalte 1 (z.B. Rolle)
             p_pwd_col = df_passwoerter.columns[1]    # Spalte 2 (z.B. Passwort)
             p_func_col = df_passwoerter.columns[2] if len(df_passwoerter.columns) > 2 else None  # Spalte 3 (z.B. Funktion)
             
-            # 2. Such-Kriterium dynamisch aus dem ersten Eintrag der ersten Zeile ableiten
-            # Verhindert Hardcoding des Strings 'Host'
+            # 2. Such-String für die Rolle dynamisch aus Zelle 1, Reihe 1 lesen (Verhindert hartcodiertes 'Host')
             erster_rollen_eintrag = str(df_passwoerter.iloc[0][p_rolle_col]).strip()
             
-            # Zeilen filtern, die dem Kriterium entsprechen
+            # Zeilen filtern, die dieser Rolle entsprechen (case-insensitive & strippt Leerzeichen)
             host_rows = df_passwoerter[df_passwoerter[p_rolle_col].astype(str).str.strip().str.lower() == erster_rollen_eintrag.lower()]
             
             treffer_gefunden = False
             for _, row in host_rows.iterrows():
                 gespeichertes_pwd = str(row[p_pwd_col]).strip()
+                
+                # Exakter Passwortvergleich
                 if pwd_input.strip() == gespeichertes_pwd:
                     st.session_state.host_authentifiziert = True
                     treffer_gefunden = True
                     
-                    # 3. Funktion dynamisch prüfen (liest den Wert direkt aus Spalte 3)
+                    # 3. Debug-Triggermodus dynamisch prüfen (liest den Textwert aus Zeile 2 für die Funktion aus)
                     if p_func_col and pd.notna(row[p_func_col]):
-                        # Ermittelt die Funktion dynamisch aus der zweiten Zeile für Debug
-                        # Verhindert Hardcoding des Strings 'Debug'
                         debug_kriterium = "debug"
                         if len(host_rows) > 1:
+                            # Bezieht das Kriterium direkt aus Zeile 2 der Excel (z.B. "Debug")
                             debug_kriterium = str(host_rows.iloc[1][p_func_col]).strip().lower()
                         
                         funktion_wert = str(row[p_func_col]).strip().lower()
@@ -427,7 +428,7 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
             else:
                 st.error("❌ Falsches Passwort. Zugriff verweigert.")
         else:
-            st.error("🛑 Passwort-Matrix 'Passwörter' nicht geladen oder leer. Bitte Admin kontaktieren.")
+            st.error("🛑 Passwort-Matrix 'Passwort_Lexikon' nicht geladen oder leer. Bitte Admin kontaktieren.")
             
     st.stop()
 
