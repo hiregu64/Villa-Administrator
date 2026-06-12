@@ -177,7 +177,7 @@ def extract_context_for_object(objekt_name):
     aktuelle_rolle = str(st.session_state.get("aktive_rolle", "Gast")).strip().lower()
     context_parts = [f"Informationen zum Objekt: {objekt_name}"]
 
-    if aktuelle_rolle == "host":
+    if aktuelle_rolle in ["host", "host_verifiziert"]:
         for col in df_wissen.columns:
             if col != bez_col and "status" not in col.lower() and col.lower() != "wo?":
                 val = row_match.iloc[0][col]
@@ -356,8 +356,10 @@ def reset_chat_flow():
     st.session_state.messages = []
 
 # ==============================================================================
-# 6. HMI PRESENTATION LAYER (Direkter, unkomplizierter Selektions-Reset)
+# 6. HMI PRESENTATION LAYER (Fixierte Titelzeile und radikaler Reset)
 # ==============================================================================
+st.title("☀️ Villa Avatar")
+
 if "aktive_rolle" not in st.session_state: st.session_state.aktive_rolle = None
 if "aktiver_use_case" not in st.session_state: st.session_state.aktiver_use_case = None
 if "messages" not in st.session_state: st.session_state.messages = []
@@ -365,11 +367,11 @@ if "bericht_filter" not in st.session_state: st.session_state.bericht_filter = N
 if "host_authentifiziert" not in st.session_state: st.session_state.host_authentifiziert = False
 if "debug_modus_aktiv" not in st.session_state: st.session_state.debug_modus_aktiv = False
 
-# Das Dropdown triggert den Reset sofort bei JEDER expliziten Interaktion des Nutzers
+# Dropdown für die Rollenauswahl
 neue_rolle = st.selectbox("Rolle", options=["Gast", "Host"], index=None, placeholder="Wer bist du?", label_visibility="collapsed")
 
 if neue_rolle is not None:
-    # Sobald der Nutzer klickt, wird gnadenlos alles darunter gelöscht und auf Anfang gesetzt
+    # Radikaler Ansatz: Jede bewusste Auswahl des Nutzers im Dropdown triggert SOFORT den Reset aller darunter liegenden Elemente
     if neue_rolle != st.session_state.aktive_rolle:
         st.session_state.aktive_rolle = neue_rolle
         st.session_state.aktiver_use_case = None
@@ -381,7 +383,7 @@ if neue_rolle is not None:
             if key.startswith("dropdown_") or key.startswith("target_col_"): del st.session_state[key]
         st.rerun()
 
-# Wenn die Rolle Host gewählt wurde, aber noch nicht verifiziert ist, erzwingen wir die Passworteingabe
+# Host-Passwort-Eingabebereich
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     st.write("---")
     pwd_input = st.text_input("🔑 Bitte Passwort für Host-Sicht eingeben:", type="password", key="host_pwd_field")
@@ -400,7 +402,7 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
                 gespeichertes_pwd = str(row[p_pwd_col]).strip()
                 if pwd_input.strip() == gespeichertes_pwd:
                     st.session_state.host_authentifiziert = True
-                    # Wir überschreiben die aktive_rolle mit einem Marker, damit bei erneutem Klick auf das Dropdown der Reset wieder anspringt!
+                    # Setze einen verifizierten Marker, damit das Dropdown bei erneuter Auswahl wieder ungleich ist und triggert!
                     st.session_state.aktive_rolle = "Host_Verifiziert"
                     treffer_gefunden = True
                     
@@ -423,7 +425,7 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
             st.error("🛑 Passwort-Matrix 'Passwort_Lexikon' nicht geladen oder leer.")
     st.stop()
 
-# INITIALISIERUNG DER DATENREDUKTIONS-VARIABLEN
+# Initialisierung der Variablen
 aktuelles_objekt = None
 aktuelle_richtung = None
 gewaehlte_direktspalte = None
@@ -431,7 +433,7 @@ gewaehlte_direktspalte = None
 chat_abfrage_text = "Wie kann ich dir helfen?"
 danke_text_template = "Vielen Dank! Ich habe deine Eingabe zum Thema '{use_case}' für die Hosts eingetragen."
 
-# Ab hier gilt die Host-Rolle für den restlichen UI-Aufbau als aktiv
+# Erlaubte Rollen-Zustände abfangen
 if st.session_state.aktive_rolle in ["Host", "Host_Verifiziert"] or st.session_state.aktive_rolle == "Gast":
     if df_usecases is not None:
         st.write("---")
@@ -486,7 +488,7 @@ if st.session_state.aktive_rolle in ["Host", "Host_Verifiziert"] or st.session_s
                 if danke_col and pd.notna(uc_row.iloc[0][danke_col]):
                     danke_text_template = str(uc_row.iloc[0][danke_col]).strip()
                 
-                # KASKADE FÜR BERICHTSTELLUNG
+                # Berichtsauswahl für administrative Rollen
                 if "bericht" in st.session_state.aktiver_use_case.lower():
                     st.write("")
                     bericht_optionen = {
@@ -508,7 +510,7 @@ if st.session_state.aktive_rolle in ["Host", "Host_Verifiziert"] or st.session_s
                     if gewaehlter_bericht_label:
                         st.session_state.bericht_filter = bericht_optionen[gewaehlter_bericht_label]
                 
-                # KASKADE FÜR STANDARD USE CASES
+                # Filterung & Kaskaden-Dropdowns für Objekte
                 else:
                     STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
                     if df_wissen is not None and not df_wissen.empty:
@@ -598,6 +600,7 @@ if st.session_state.aktiver_use_case and "bericht" in st.session_state.aktiver_u
         
         st.session_state.messages.append({"role": "assistant", "content": report_output})
         st.session_state.bericht_filter = None
+        st.rerun()
 
 st.write("---")
 for msg in st.session_state.messages:
