@@ -50,7 +50,7 @@ st.markdown("""
 if "last_write_status" not in st.session_state: st.session_state.last_write_status = "Noch kein Schreibvorgang ausgelöst."
 if "last_extracted_context" not in st.session_state: st.session_state.last_extracted_context = "Kein Kontext extrahiert."
 
-# Hilfsfunktion zur Ermittlung editierbarer Datenfelder (Issue 6)
+# Hilfsfunktion zur Ermittlung editierbarer Datenfelder (Issue 6 / Issue 9)
 def get_datenspalten_options(df):
     if df is None: return []
     geschuetzt = ["bezeichnung", "wo?", "id", "kategorie", "relevanz gast"]
@@ -375,16 +375,19 @@ if "host_authentifiziert" not in st.session_state: st.session_state.host_authent
 if "debug_modus_aktiv" not in st.session_state: st.session_state.debug_modus_aktiv = False
 
 neue_rolle = st.selectbox("Rolle", options=["Gast", "Host"], index=None, placeholder="Wer bist du?", label_visibility="collapsed")
-if neue_rolle != st.session_state.aktive_rolle:
-    st.session_state.aktive_rolle = neue_rolle
-    st.session_state.aktiver_use_case = None
-    st.session_state.bericht_filter = None
-    st.session_state.host_authentifiziert = False
-    st.session_state.debug_modus_aktiv = False
-    st.session_state.messages = []
-    for key in list(st.session_state.keys()):
-        if key.startswith("dropdown_") or key.startswith("target_col_"): del st.session_state[key]
-    st.rerun()
+
+# Issue 7 gelöst: Wenn die Rolle erneut gewählt wird (z.B. Wechsel von Standard-Host zu Admin-Host), PW-Abfrage zurücksetzen
+if neue_rolle is not None:
+    if neue_rolle != st.session_state.aktive_rolle or neue_rolle == "Host":
+        st.session_state.aktive_rolle = neue_rolle
+        st.session_state.aktiver_use_case = None
+        st.session_state.bericht_filter = None
+        st.session_state.host_authentifiziert = False
+        st.session_state.debug_modus_aktiv = False
+        st.session_state.messages = []
+        for key in list(st.session_state.keys()):
+            if key.startswith("dropdown_") or key.startswith("target_col_"): del st.session_state[key]
+        st.rerun()
 
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     st.write("---")
@@ -487,7 +490,7 @@ if st.session_state.aktive_rolle and df_usecases is not None:
             if danke_col and pd.notna(uc_row.iloc[0][danke_col]):
                 danke_text_template = str(uc_row.iloc[0][danke_col]).strip()
             
-            # KASKADE FÜR BERICHTSTELLUNG (Issue 4 gelöst: Keine doppelten Abfragen oder Buttons)
+            # KASKADE FÜR BERICHTSTELLUNG
             if "bericht" in st.session_state.aktiver_use_case.lower():
                 st.write("")
                 bericht_optionen = {
@@ -532,14 +535,15 @@ if st.session_state.aktive_rolle and df_usecases is not None:
                         
                         dp_key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
                         st.selectbox(label=f"hidden_{kat}", options=verfuegbare_bez, index=None, placeholder=f"🔎 {kat} wählen...", key=dp_key, on_change=reset_chat_flow, label_visibility="collapsed")
-                            
+                    
+                    # Issue 9 gelöst: Sofortige Auswertung der Dropdowns zur Objekt-Ermittlung
                     for kat in STANDARD_DROPDOWNS:
                         val = st.session_state.get(f"dropdown_{kat}_{st.session_state.aktiver_use_case}")
                         if val is not None:
                             aktuelles_objekt = val
                             break
                     
-                    # Issue 6 gelöst: Zusätzliches Dropdown für Spaltenauswahl bei "Neue Information" erscheint nun fehlerfrei
+                    # Issue 9 gelöst: Das zweite Dropdown zur Spaltenauswahl erscheint nun fehlerfrei direkt nach Objekt-Wahl
                     if st.session_state.aktive_rolle == "Host" and st.session_state.aktiver_use_case == "Neue Information" and aktuelles_objekt:
                         spalten_options = get_datenspalten_options(df_wissen)
                         col_key = f"target_col_{st.session_state.aktiver_use_case}"
@@ -585,10 +589,10 @@ if st.session_state.debug_modus_aktiv:
         st.text_area(label="Matrix-Rohdaten", value=st.session_state.get("last_extracted_context", ""), height=100, disabled=True, label_visibility="collapsed")
 
 # ==============================================================================
-# 7. CHAT FLOW & DETERMINISTISCHES ROUTING (Mit doppeltem Python-Sicherheitsnetz)
+# 7. CHAT FLOW & DETERMINISTISCHES ROUTING (Issue 10 gelöst: Direkte Bericht-Rendering-Pipeline)
 # ==============================================================================
 if st.session_state.aktiver_use_case and "bericht" in st.session_state.aktiver_use_case.lower() and st.session_state.bericht_filter:
-    with st.spinner("Analysiere Datenbasis..."):
+    with st.spinner("Analysiere Datenbasis und generiere Systembericht..."):
         report_data_str = generate_raw_report_context(st.session_state.bericht_filter)
         if "Keine passenden Einträge" in report_data_str:
             report_output = f"Aktuell liegen keine Einträge für den Filter '{st.session_state.bericht_filter}' vor. ☀️"
@@ -596,24 +600,25 @@ if st.session_state.aktiver_use_case and "bericht" in st.session_state.aktiver_u
             prompt = f"Du bist der administrative Analyst. Strukturiere diese Matrix-Daten professionell und chronologisch für den Host:\n\n{report_data_str}"
             report_output = call_gemini_api_raw(prompt, system_context="Liste Fakten auf, nutze Bulletpoints, bleibe sachlich.")
         
+        # Direkt in die Nachrichten schreiben, Filter leeren und direkt weiter rendern (ohne zerschießendes Rerun)
         st.session_state.messages.append({"role": "assistant", "content": report_output})
         st.session_state.bericht_filter = None
-        st.rerun()
 
 st.write("---")
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
-# Issue 5 gelöst: Dynamische Steuerung der Sichtbarkeit des Chat-Inputs für alle Use Cases
+# Issue 8 gelöst: Chat-Input wird nun für alle Schreib-Use-Cases (Störung, Feedback, Neue Information) uneingeschränkt geöffnet
 zeige_chat_input = False
 if st.session_state.aktiver_use_case and "bericht" not in st.session_state.aktiver_use_case.lower():
     if aktuelle_richtung == "OUTPUT":
         zeige_chat_input = True
     elif aktuelle_richtung == "INPUT":
-        if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.aktive_rolle == "Host":
+        # Bei "Neue Information" muss zusätzlich die Spalte gewählt sein, alle anderen öffnen sofort
+        if st.session_state.aktiver_use_case == "Neue Information":
             if aktuelles_objekt and gewaehlte_direktspalte:
                 zeige_chat_input = True
-        elif aktuelles_objekt:
+        else:
             zeige_chat_input = True
 
 if zeige_chat_input:
@@ -658,7 +663,9 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
             if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.aktive_rolle == "Host" and gewaehlte_direktspalte:
                 execute_matrix_input_direct(gewaehlte_direktspalte, aktuelles_objekt, user_input)
             else:
-                execute_matrix_input(st.session_state.aktiver_use_case, aktuelles_objekt, user_input)
+                # Fallback, falls kein Objekt gewählt wurde (z.B. globales Feedback/Störung)
+                ziel_obj = aktuelles_objekt if aktuelles_objekt else "Nicht gefunden"
+                execute_matrix_input(st.session_state.aktiver_use_case, ziel_obj, user_input)
                 
             danke_satz = danke_text_template.replace("{use_case}", st.session_state.aktiver_use_case)
             st.session_state.messages.append({"role": "assistant", "content": danke_satz})
