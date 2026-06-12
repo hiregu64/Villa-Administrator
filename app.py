@@ -152,6 +152,7 @@ def call_gemini_api_structured(prompt, context="", system_context=None):
             antwort_text=str(data.get("antwort_text", ""))
         )
     except Exception as e:
+        # Fallback bei Quota-Überschreitung
         return KiAntwortSchema(wissensluecke_erkannt=True, antwort_text="")
 
 def call_gemini_api_raw(prompt, system_context=None):
@@ -165,7 +166,7 @@ def call_gemini_api_raw(prompt, system_context=None):
         )
         return response.text
     except Exception as e:
-        return f"🛑 KI-Fehler: {e}"
+        return f"🛑 Hinweis (Quota/API): {e}\n\n[System-Modus: Zeige Rohdaten aufgrund von API-Limitierung]"
 
 def extract_context_for_object(objekt_name):
     if df_wissen is None or df_lexikon is None or objekt_name is None: return ""
@@ -359,12 +360,16 @@ def generate_raw_report_context(filter_type):
 
 def reset_chat_flow():
     st.session_state.messages = []
+    # Bei Änderung eines Objekt-Dropdowns suchen wir den neu gewählten Wert
+    for key in st.session_state.keys():
+        if key.startswith("dropdown_") and st.session_state[key] is not None:
+            st.session_state.aktuell_gewaehltes_objekt = st.session_state[key]
+            return
+    st.session_state.aktuell_gewaehltes_objekt = None
 
-# --- KORREKTUR: on_change Callback für die Berichts-Auswahl ---
 def handle_report_selection_callback():
     label = st.session_state.get("system_report_select")
-    if not label:
-        return
+    if not label: return
         
     bericht_optionen = {
         "⚠️ Offene Störungen": "offene_stoerungen",
@@ -377,7 +382,7 @@ def handle_report_selection_callback():
     
     filter_type = bericht_optionen.get(label)
     if filter_type:
-        st.session_state.messages = [] # Chat leeren für neuen Bericht
+        st.session_state.messages = []
         report_data_str = generate_raw_report_context(filter_type)
         if "Keine passenden Einträge" in report_data_str:
             report_output = f"Aktuell liegen keine Einträge für den Filter '{label}' vor. ☀️"
@@ -392,8 +397,7 @@ def handle_report_selection_callback():
 # ==============================================================================
 def check_password_callback():
     pwd_input = st.session_state.get("host_pwd_field", "").strip()
-    if pwd_input == "":
-        return
+    if pwd_input == "": return
         
     if df_passwoerter is not None and not df_passwoerter.empty:
         p_rolle_col = df_passwoerter.columns[0]
@@ -431,8 +435,8 @@ if "aktiver_use_case" not in st.session_state: st.session_state.aktiver_use_case
 if "messages" not in st.session_state: st.session_state.messages = []
 if "host_authentifiziert" not in st.session_state: st.session_state.host_authentifiziert = False
 if "debug_modus_aktiv" not in st.session_state: st.session_state.debug_modus_aktiv = False
+if "aktuell_gewaehltes_objekt" not in st.session_state: st.session_state.aktuell_gewaehltes_objekt = None
 
-# Dropdown für die Rollenauswahl
 neue_rolle = st.selectbox("Rolle", options=["Gast", "Host"], index=None, placeholder="Wer bist du?", label_visibility="collapsed")
 
 if neue_rolle is not None:
@@ -445,6 +449,7 @@ if neue_rolle is not None:
     if neue_rolle != st.session_state.aktive_rolle:
         st.session_state.aktive_rolle = neue_rolle
         st.session_state.aktiver_use_case = None
+        st.session_state.aktuell_gewaehltes_objekt = None
         st.session_state.messages = []
         for key in list(st.session_state.keys()):
             if key.startswith("dropdown_") or key.startswith("target_col_") or key == "system_report_select": del st.session_state[key]
@@ -466,8 +471,6 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
     )
     st.stop()
 
-# Initialisierung der Variablen
-aktuelles_objekt = None
 aktuelle_richtung = None
 gewaehlte_direktspalte = None
 
@@ -511,6 +514,7 @@ if st.session_state.aktive_rolle in ["Host", "Gast"]:
 
         if neuer_use_case != st.session_state.aktiver_use_case:
             st.session_state.aktiver_use_case = neuer_use_case
+            st.session_state.aktuell_gewaehltes_objekt = None
             st.session_state.messages = []
             for key in list(st.session_state.keys()):
                 if key.startswith("dropdown_") or key.startswith("target_col_") or key == "system_report_select": del st.session_state[key]
@@ -527,7 +531,6 @@ if st.session_state.aktive_rolle in ["Host", "Gast"]:
                 if danke_col and pd.notna(uc_row.iloc[0][danke_col]):
                     danke_text_template = str(uc_row.iloc[0][danke_col]).strip()
                 
-                # --- KORREKTUR: Berichts-Dropdown mit persistentem Key und on_change Callback ---
                 if "bericht" in st.session_state.aktiver_use_case.lower():
                     st.write("")
                     bericht_optionen = [
@@ -573,16 +576,12 @@ if st.session_state.aktive_rolle in ["Host", "Gast"]:
                             dp_key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
                             st.selectbox(label=f"hidden_{kat}", options=verfuegbare_bez, index=None, placeholder=f"🔎 {kat} wählen...", key=dp_key, on_change=reset_chat_flow, label_visibility="collapsed")
                         
-                        for kat in STANDARD_DROPDOWNS:
-                            val = st.session_state.get(f"dropdown_{kat}_{st.session_state.aktiver_use_case}")
-                            if val is not None:
-                                aktuelles_objekt = val
-                                break
-                        
-                        if st.session_state.aktive_rolle == "Host" and st.session_state.aktiver_use_case == "Neue Information" and aktuelles_objekt:
+                        # --- KORREKTUR: Abfrage über den persistenten State ---
+                        if st.session_state.aktive_rolle == "Host" and st.session_state.aktiver_use_case == "Neue Information" and st.session_state.aktuell_gewaehltes_objekt:
                             spalten_options = get_datenspalten_options(df_wissen)
                             col_key = f"target_col_{st.session_state.aktiver_use_case}"
                             
+                            # Das zweite Dropdown zur Spaltenabfrage
                             gewaehlte_direktspalte = st.selectbox(
                                 label="📍 In welche Matrix-Spalte soll dokumentiert werden?",
                                 options=spalten_options,
@@ -596,7 +595,7 @@ if st.session_state.aktive_rolle in ["Host", "Gast"]:
                                 gewaehlte_direktspalte = st.session_state.get(col_key)
 
 # ==============================================================================
-# 6.5 SYSTEM-DIAGNOSE MONITOR (Aktiviert durch das Debug-Passwort)
+# 6.5 SYSTEM-DIAGNOSE MONITOR
 # ==============================================================================
 if st.session_state.debug_modus_aktiv:
     st.write("")
@@ -604,7 +603,7 @@ if st.session_state.debug_modus_aktiv:
         d_col1, d_col2 = st.columns(2)
         with d_col1:
             st.metric(label="1. Aktive Rolle", value=str(st.session_state.get("aktive_rolle", "None")))
-            st.metric(label="3. Gewähltes Objekt", value=str(aktuelles_objekt))
+            st.metric(label="3. Gewähltes Objekt", value=str(st.session_state.aktuell_gewaehltes_objekt))
             st.metric(label="4. Direkt-Zielspalte (Host)", value=str(gewaehlte_direktspalte))
         with d_col2:
             st.metric(label="2. Use Case | Richtung", value=f"{st.session_state.get('aktiver_use_case')} | {aktuelle_richtung}")
@@ -638,7 +637,7 @@ if st.session_state.aktiver_use_case and "bericht" not in st.session_state.aktiv
         zeige_chat_input = True
     elif aktuelle_richtung == "INPUT":
         if st.session_state.aktiver_use_case == "Neue Information":
-            if aktuelles_objekt and gewaehlte_direktspalte:
+            if st.session_state.aktuell_gewaehltes_objekt and gewaehlte_direktspalte:
                 zeige_chat_input = True
         else:
             zeige_chat_input = True
@@ -652,13 +651,13 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
     user_input = st.session_state.messages[-1]["content"]
     
     if aktuelle_richtung == "OUTPUT":
-        if aktuelles_objekt is None or aktuelles_objekt == "Nicht gefunden":
+        if st.session_state.aktuell_gewaehltes_objekt is None or st.session_state.aktuell_gewaehltes_objekt == "Nicht gefunden":
             with st.spinner("Transitional Routing active..."):
                 execute_transitional_routing(user_input, "Nicht gefunden")
                 st.rerun()
         else:
             with st.spinner("Durchsuche Matrix..."):
-                context_str = extract_context_for_object(aktuelles_objekt)
+                context_str = extract_context_for_object(st.session_state.aktuell_gewaehltes_objekt)
                 structured_response = call_gemini_api_structured(user_input, context_str)
                 
                 ist_luecke = structured_response.wissensluecke_erkannt
@@ -673,7 +672,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                 
                 if ist_luecke or ki_text == "" or any(phrase in ki_text_lower for phrase in luecken_phrasen):
                     with st.spinner("Sicherheitsnetz aktiv: Wissenslücke detektiert. Protokolliere..."):
-                        execute_transitional_routing(user_input, aktuelles_objekt)
+                        execute_transitional_routing(user_input, st.session_state.aktuell_gewaehltes_objekt)
                 else:
                     st.session_state.messages.append({"role": "assistant", "content": ki_text})
                 st.rerun()
@@ -681,9 +680,9 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
     elif aktuelle_richtung == "INPUT":
         with st.spinner("Protokolliere Eintrag in der Matrix..."):
             if st.session_state.aktiver_use_case == "Neue Information" and gewaehlte_direktspalte:
-                execute_matrix_input_direct(gewaehlte_direktspalte, aktuelles_objekt, user_input)
+                execute_matrix_input_direct(gewaehlte_direktspalte, st.session_state.aktuell_gewaehltes_objekt, user_input)
             else:
-                ziel_obj = aktuelles_objekt if aktuelles_objekt else "Nicht gefunden"
+                ziel_obj = st.session_state.aktuell_gewaehltes_objekt if st.session_state.aktuell_gewaehltes_objekt else "Nicht gefunden"
                 execute_matrix_input(st.session_state.aktiver_use_case, ziel_obj, user_input)
                 
             danke_satz = danke_text_template.replace("{use_case}", st.session_state.aktiver_use_case)
