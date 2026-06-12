@@ -356,6 +356,41 @@ def reset_chat_flow():
     st.session_state.messages = []
 
 # ==============================================================================
+# NATIVE ON-CHANGE PRÜFUNG (Wird sofort beim Drücken von ENTER getriggert)
+# ==============================================================================
+def check_password_callback():
+    pwd_input = st.session_state.get("host_pwd_field", "").strip()
+    if pwd_input == "":
+        return
+        
+    if df_passwoerter is not None and not df_passwoerter.empty:
+        p_rolle_col = df_passwoerter.columns[0]
+        p_pwd_col = df_passwoerter.columns[1]
+        p_func_col = df_passwoerter.columns[2] if len(df_passwoerter.columns) > 2 else None
+        
+        erster_rollen_eintrag = str(df_passwoerter.iloc[0][p_rolle_col]).strip()
+        host_rows = df_passwoerter[df_passwoerter[p_rolle_col].astype(str).str.strip().str.lower() == erster_rollen_eintrag.lower()]
+        
+        for _, row in host_rows.iterrows():
+            if pwd_input == str(row[p_pwd_col]).strip():
+                st.session_state.host_authentifiziert = True
+                st.session_state.aktive_rolle = "Host_Verifiziert"
+                st.session_state["pwd_error_msg"] = None
+                
+                if p_func_col and pd.notna(row[p_func_col]):
+                    debug_kriterium = "debug"
+                    if len(host_rows) > 1:
+                        debug_kriterium = str(host_rows.iloc[1][p_func_col]).strip().lower()
+                    if str(row[p_func_col]).strip().lower() == debug_kriterium:
+                        st.session_state.debug_modus_aktiv = True
+                return
+        
+        st.session_state["pwd_error_msg"] = "❌ Falsches Passwort. Zugriff verweigert."
+        st.session_state["host_pwd_field"] = ""  # Feld leeren bei Fehler
+    else:
+        st.session_state["pwd_error_msg"] = "🛑 Passwort-Matrix 'Passwort_Lexikon' fehlt."
+
+# ==============================================================================
 # 6. HMI PRESENTATION LAYER (Fixierte Titelzeile und radikaler Reset)
 # ==============================================================================
 st.title("☀️ Villa Avatar")
@@ -377,59 +412,27 @@ if neue_rolle is not None:
         st.session_state.bericht_filter = None
         st.session_state.host_authentifiziert = False
         st.session_state.debug_modus_aktiv = False
+        st.session_state["pwd_error_msg"] = None
         st.session_state.messages = []
         for key in list(st.session_state.keys()):
             if key.startswith("dropdown_") or key.startswith("target_col_"): del st.session_state[key]
         st.rerun()
 
-# ==============================================================================
-# INTERNE PRÜFUNG DES NATIVEN ENTER-EVENTS (Sichert Funktion ohne st.stop Blockade)
-# ==============================================================================
+# Host-Passwort-Eingabebereich mit nativem Callback
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
-    # Wenn im State bereits ein Passwort durch ENTER existiert, werten wir es VOR dem st.stop aus
-    pwd_aus_state = st.session_state.get("host_pwd_field", "").strip()
+    st.write("---")
     
-    if pwd_aus_state != "":
-        if df_passwoerter is not None and not df_passwoerter.empty:
-            p_rolle_col = df_passwoerter.columns[0]
-            p_pwd_col = df_passwoerter.columns[1]
-            p_func_col = df_passwoerter.columns[2] if len(df_passwoerter.columns) > 2 else None
-            
-            erster_rollen_eintrag = str(df_passwoerter.iloc[0][p_rolle_col]).strip()
-            host_rows = df_passwoerter[df_passwoerter[p_rolle_col].astype(str).str.strip().str.lower() == erster_rollen_eintrag.lower()]
-            
-            treffer_gefunden = False
-            for _, row in host_rows.iterrows():
-                gespeichertes_pwd = str(row[p_pwd_col]).strip()
-                if pwd_aus_state == gespeichertes_pwd:
-                    st.session_state.host_authentifiziert = True
-                    st.session_state.aktive_rolle = "Host_Verifiziert"
-                    treffer_gefunden = True
-                    
-                    if p_func_col and pd.notna(row[p_func_col]):
-                        debug_kriterium = "debug"
-                        if len(host_rows) > 1:
-                            debug_kriterium = str(host_rows.iloc[1][p_func_col]).strip().lower()
-                        
-                        funktion_wert = str(row[p_func_col]).strip().lower()
-                        if funktion_wert == debug_kriterium:
-                            st.session_state.debug_modus_aktiv = True
-                    break
-            
-            if treffer_gefunden:
-                st.rerun()
-            else:
-                # Setze das Feld zurück, damit der Nutzer es neu versuchen kann
-                st.session_state["host_pwd_field"] = ""
-                st.error("❌ Falsches Passwort. Zugriff verweigert. Bitte erneut versuchen:")
-        else:
-            st.error("🛑 Passwort-Matrix 'Passwort_Lexikon' nicht geladen oder leer.")
-
-    # Zeige das Feld an und blockiere erst danach das Weiterlaufen des restlichen Skripts
-    if not st.session_state.host_authentifiziert:
-        st.write("---")
-        st.text_input("🔑 Bitte Passwort für Host-Sicht eingeben und ENTER drücken:", type="password", key="host_pwd_field")
-        st.stop()
+    # Eventuelle Fehlermeldung anzeigen
+    if st.session_state.get("pwd_error_msg"):
+        st.error(st.session_state["pwd_error_msg"])
+        
+    st.text_input(
+        "🔑 Bitte Passwort für Host-Sicht eingeben und ENTER drücken:", 
+        type="password", 
+        key="host_pwd_field",
+        on_change=check_password_callback
+    )
+    st.stop()
 
 # Initialisierung der Variablen
 aktuelles_objekt = None
