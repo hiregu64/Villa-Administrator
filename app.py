@@ -371,7 +371,6 @@ if "debug_modus_aktiv" not in st.session_state: st.session_state.debug_modus_akt
 neue_rolle = st.selectbox("Rolle", options=["Gast", "Host"], index=None, placeholder="Wer bist du?", label_visibility="collapsed")
 
 if neue_rolle is not None:
-    # Jede bewusste Auswahl im Dropdown triggert SOFORT den vollständigen Reset darunter liegender Elemente
     if neue_rolle != st.session_state.aktive_rolle:
         st.session_state.aktive_rolle = neue_rolle
         st.session_state.aktiver_use_case = None
@@ -383,7 +382,7 @@ if neue_rolle is not None:
             if key.startswith("dropdown_") or key.startswith("target_col_"): del st.session_state[key]
         st.rerun()
 
-# Host-Passwort-Eingabebereich (Reagiert jetzt nativ und fehlerfrei auf ENTER, ohne Button-Zwang)
+# Host-Passwort-Eingabebereich (Reagiert jetzt nativ und fehlerfrei auf ENTER)
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     st.write("---")
     pwd_input = st.text_input("🔑 Bitte Passwort für Host-Sicht eingeben und ENTER drücken:", type="password", key="host_pwd_field")
@@ -423,7 +422,7 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
         else:
             st.error("🛑 Passwort-Matrix 'Passwort_Lexikon' nicht geladen oder leer.")
             
-    st.stop()
+    st.stop() # Hält die App hier an, AUSSER das Passwort war korrekt und st.rerun() wurde gefeuert
 
 # Initialisierung der Variablen
 aktuelles_objekt = None
