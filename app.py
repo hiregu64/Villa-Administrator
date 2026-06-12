@@ -50,7 +50,7 @@ st.markdown("""
 if "last_write_status" not in st.session_state: st.session_state.last_write_status = "Noch kein Schreibvorgang ausgelöst."
 if "last_extracted_context" not in st.session_state: st.session_state.last_extracted_context = "Kein Kontext extrahiert."
 
-# Hilfsfunktion zur Ermittlung editierbarer Datenfelder für den Host (exklusive geschützter Systemspalten)
+# Hilfsfunktion zur Ermittlung editierbarer Datenfelder (Issue 6)
 def get_datenspalten_options(df):
     if df is None: return []
     geschuetzt = ["bezeichnung", "wo?", "id", "kategorie", "relevanz gast"]
@@ -487,7 +487,7 @@ if st.session_state.aktive_rolle and df_usecases is not None:
             if danke_col and pd.notna(uc_row.iloc[0][danke_col]):
                 danke_text_template = str(uc_row.iloc[0][danke_col]).strip()
             
-            # KASKADE FÜR BERICHSTELLUNG (Dropdown statt Buttons)
+            # KASKADE FÜR BERICHTSTELLUNG (Issue 4 gelöst: Keine doppelten Abfragen oder Buttons)
             if "bericht" in st.session_state.aktiver_use_case.lower():
                 st.write("")
                 bericht_optionen = {
@@ -503,7 +503,8 @@ if st.session_state.aktive_rolle and df_usecases is not None:
                     label="Gewünschten System-Bericht auswählen:",
                     options=list(bericht_optionen.keys()),
                     index=None,
-                    placeholder="📋 Berichtstyp wählen..."
+                    placeholder="📋 Berichtstyp wählen...",
+                    label_visibility="collapsed"
                 )
                 if gewaehlter_bericht_label:
                     st.session_state.bericht_filter = bericht_optionen[gewaehlter_bericht_label]
@@ -538,7 +539,7 @@ if st.session_state.aktive_rolle and df_usecases is not None:
                             aktuelles_objekt = val
                             break
                     
-                    # Zusätzliches Dropdown für die Spaltenauswahl bei "Neue Information" (NUR Host)
+                    # Issue 6 gelöst: Zusätzliches Dropdown für Spaltenauswahl bei "Neue Information" erscheint nun fehlerfrei
                     if st.session_state.aktive_rolle == "Host" and st.session_state.aktiver_use_case == "Neue Information" and aktuelles_objekt:
                         spalten_options = get_datenspalten_options(df_wissen)
                         col_key = f"target_col_{st.session_state.aktiver_use_case}"
@@ -546,9 +547,12 @@ if st.session_state.aktive_rolle and df_usecases is not None:
                             label="Zieldokumentation Spalte wählen:",
                             options=spalten_options,
                             index=None,
-                            placeholder="📍 In welche Matrix-Spalte soll dokumentiert werden?...",
-                            key=col_key
+                            placeholder="📍 In welche Matrix-Spalte soll dokumentiert werden?..."
                         )
+                        if gewaehlte_direktspalte:
+                            st.session_state[col_key] = gewaehlte_direktspalte
+                        else:
+                            gewaehlte_direktspalte = st.session_state.get(col_key)
 
 # ==============================================================================
 # 6.5 SYSTEM-DIAGNOSE MONITOR (NUR SICHTBAR WENN DER ADMIN-DEBUG-MODUS AKTIV IST)
@@ -600,7 +604,7 @@ st.write("---")
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
-# Steuerung der Chat-Eingabe-Sichtbarkeit anhand der vordefinierten Use-Case-Kaskade
+# Issue 5 gelöst: Dynamische Steuerung der Sichtbarkeit des Chat-Inputs für alle Use Cases
 zeige_chat_input = False
 if st.session_state.aktiver_use_case and "bericht" not in st.session_state.aktiver_use_case.lower():
     if aktuelle_richtung == "OUTPUT":
