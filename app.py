@@ -154,19 +154,6 @@ def call_gemini_api_structured(prompt, context="", system_context=None):
     except Exception as e:
         return KiAntwortSchema(wissensluecke_erkannt=True, antwort_text="")
 
-def call_gemini_api_raw(prompt, system_context=None):
-    client = get_ki_client()
-    if client is None: return "🛑 KI-Schnittstelle nicht konfiguriert."
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash", 
-            contents=prompt, 
-            config=types.GenerateContentConfig(system_instruction=system_context, temperature=0.2)
-        )
-        return response.text
-    except Exception as e:
-        return f"🛑 Hinweis (Quota/API): {e}\n\n[System-Modus: Zeige Rohdaten aufgrund von API-Limitierung]"
-
 def extract_context_for_object(objekt_name):
     if df_wissen is None or df_lexikon is None or objekt_name is None: return ""
     
@@ -324,52 +311,6 @@ def execute_transitional_routing(user_input, objekt_name=None):
     execute_matrix_input("Keine Information", ziel_obj, user_input)
     st.cache_data.clear()
 
-def generate_raw_report_context(filter_type):
-    if df_wissen is None: return "Keine Einträge verfügbar."
-    report_lines = []
-    
-    for col in df_wissen.columns:
-        verarbeiten = False
-        if filter_type == "offene_stoerungen" and "störung" in col.lower() and "status" not in col.lower(): verarbeiten = True
-        elif filter_type == "behobene_stoerungen" and "störung" in col.lower() and "status" not in col.lower(): verarbeiten = True
-        elif filter_type == "offenes_feedback" and "feedback" in col.lower() and "status" not in col.lower(): verarbeiten = True
-        elif filter_type == "ignoriertes_feedback" and "feedback" in col.lower() and "status" not in col.lower(): verarbeiten = True
-        elif filter_type == "offene_luecken" and "information" in col.lower() and "status" not in col.lower(): verarbeiten = True
-        elif filter_type == "gesamtuebersicht" and ("störung" in col.lower() or "feedback" in col.lower() or "information" in col.lower()) and "status" not in col.lower(): verarbeiten = True
-            
-        if verarbeiten:
-            bez_col = df_wissen.columns[0]
-            for idx, row in df_wissen.iterrows():
-                cell_val = row[col]
-                ist_gueltig = True
-                status_col = f"{col} Status"
-                
-                if status_col in df_wissen.columns:
-                    status_val = str(row[status_col]).lower()
-                    if filter_type == "offene_stoerungen" and "aktiv" not in status_val: ist_gueltig = False
-                    if filter_type == "behobene_stoerungen" and "ok" not in status_val and "beheben" not in status_val: ist_gueltig = False
-                    if filter_type == "offenes_feedback" and "offen" not in status_val: ist_gueltig = False
-                    if filter_type == "ignoriertes_feedback" and "nein" not in status_val and "ignorier" not in status_val: ist_gueltig = False
-                    if filter_type == "offene_luecken" and "offen" not in status_val: ist_gueltig = False
-                    
-                if pd.notna(cell_val) and str(cell_val).strip() != "" and ist_gueltig:
-                    report_lines.append(f"Objekt: {row[bez_col]} | Kat: {col}\nEintrag: {cell_val}\n---")
-                    
-    return "\n".join(report_lines) if report_lines else "Keine passenden Einträge gefunden."
-
-# Callback für Berichte-Wechsel
-def handle_report_selection_callback():
-    st.session_state.messages = []
-
-# Callback für Objekt-Wechsel im Direktmodus
-def handle_direct_object_callback():
-    st.session_state.aktuell_gewaehltes_objekt = st.session_state.get("direct_host_object_select")
-    st.session_state.messages = []
-
-# Callback für Spalten-Wechsel im Direktmodus
-def handle_direct_col_callback():
-    st.session_state[f"target_col_{st.session_state.aktiver_use_case}"] = st.session_state.get("host_direct_col_select")
-
 # ==============================================================================
 # NATIVE PASSPORT VALIDATION FUNCTION (on_change callback)
 # ==============================================================================
@@ -434,9 +375,7 @@ if neue_rolle is not None:
                 del st.session_state[key]
         st.rerun()
 
-# ==============================================================================
 # HOST-LOGIN BLOCKIERUNG
-# ==============================================================================
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     st.write("---")
     if st.session_state.get("pwd_error_msg"):
@@ -456,178 +395,163 @@ gewaehlte_direktspalte = None
 chat_abfrage_text = "Wie kann ich dir helfen?"
 danke_text_template = "Vielen Dank! Ich habe deine Eingabe zum Thema '{use_case}' für die Hosts eingetragen."
 
-if st.session_state.aktive_rolle in ["Host", "Gast"]:
-    if df_usecases is not None:
-        st.write("---")
-        
-        uc_col = df_usecases.columns[0]
-        dir_col = df_usecases.columns[1]
-        hmi_col = df_usecases.columns[2]
-        
-        btn_col = df_usecases.columns[3] if len(df_usecases.columns) > 3 else None
-        prompt_col = df_usecases.columns[4] if len(df_usecases.columns) > 4 else None
-        danke_col = df_usecases.columns[5] if len(df_usecases.columns) > 5 else None
-        
-        mask_sichtbar = df_usecases[hmi_col].astype(str).str.lower().str.strip() == "ja"
-        verfuegbare_uc = df_usecases[mask_sichtbar][uc_col].tolist()
-        
-        if st.session_state.aktive_rolle == "Gast":
-            erlaubte_buttons = [uc for uc in verfuegbare_uc if any(x in uc.lower() for x in ["hilfe", "störung", "feedback"])]
-        else:
-            erlaubte_buttons = verfuegbare_uc
+if st.session_state.aktive_rolle in ["Host", "Gast"] and df_usecases is not None:
+    st.write("---")
+    
+    uc_col = df_usecases.columns[0]
+    dir_col = df_usecases.columns[1]
+    hmi_col = df_usecases.columns[2]
+    
+    btn_col = df_usecases.columns[3] if len(df_usecases.columns) > 3 else None
+    prompt_col = df_usecases.columns[4] if len(df_usecases.columns) > 4 else None
+    danke_col = df_usecases.columns[5] if len(df_usecases.columns) > 5 else None
+    
+    mask_sichtbar = df_usecases[hmi_col].astype(str).str.lower().str.strip() == "ja"
+    verfuegbare_uc = df_usecases[mask_sichtbar][uc_col].tolist()
+    
+    if st.session_state.aktive_rolle == "Gast":
+        erlaubte_buttons = [uc for uc in verfuegbare_uc if any(x in uc.lower() for x in ["hilfe", "störung", "feedback"])]
+    else:
+        erlaubte_buttons = verfuegbare_uc
 
-        cols = st.columns(len(erlaubte_buttons))
-        
-        # Rendere Navigations-Buttons permanent und speichere Zustand stabil ab
-        for idx, uc_name in enumerate(erlaubte_buttons):
-            with cols[idx]:
-                is_active = (st.session_state.aktiver_use_case == uc_name)
-                button_label = uc_name
-                if btn_col:
-                    btn_match = df_usecases[df_usecases[uc_col].astype(str).str.strip() == str(uc_name).strip()]
-                    if not btn_match.empty and pd.notna(btn_match.iloc[0][btn_col]):
-                        button_label = str(btn_match.iloc[0][btn_col]).strip()
-                
-                if st.button(button_label, use_container_width=True, type="primary" if is_active else "secondary", key=f"btn_{uc_name}"):
-                    st.session_state.aktiver_use_case = uc_name
-                    st.session_state.aktuell_gewaehltes_objekt = None
-                    st.session_state.messages = []
-                    for key in list(st.session_state.keys()):
-                        if key.startswith("dropdown_") or key.startswith("target_col_") or key == "system_report_select" or "direct" in key: 
-                            del st.session_state[key]
-                    st.rerun()
+    cols = st.columns(len(erlaubte_buttons))
+    
+    for idx, uc_name in enumerate(erlaubte_buttons):
+        with cols[idx]:
+            is_active = (st.session_state.aktiver_use_case == uc_name)
+            button_label = uc_name
+            if btn_col:
+                btn_match = df_usecases[df_usecases[uc_col].astype(str).str.strip() == str(uc_name).strip()]
+                if not btn_match.empty and pd.notna(btn_match.iloc[0][btn_col]):
+                    button_label = str(btn_match.iloc[0][btn_col]).strip()
+            
+            if st.button(button_label, use_container_width=True, type="primary" if is_active else "secondary", key=f"btn_{uc_name}"):
+                st.session_state.aktiver_use_case = uc_name
+                st.session_state.aktuell_gewaehltes_objekt = None
+                st.session_state.messages = []
+                for key in list(st.session_state.keys()):
+                    if key.startswith("dropdown_") or key.startswith("target_col_") or key == "system_report_select" or "direct" in key: 
+                        del st.session_state[key]
+                st.rerun()
 
-        # ==============================================================================
-        # WEICHENSTEUERUNG FÜR AKTIVEN USE CASE (Unabhängig von Button-Klicks)
-        # ==============================================================================
-        if st.session_state.aktiver_use_case:
-            uc_row = df_usecases[df_usecases[uc_col].astype(str).str.lower().str.strip() == st.session_state.aktiver_use_case.lower().strip()]
-            if not uc_row.empty:
-                aktuelle_richtung = str(uc_row.iloc[0][dir_col]).strip().upper()
+    # ==============================================================================
+    # DETERMINISTISCHE WIDGET-GENERIERUNG
+    # ==============================================================================
+    if st.session_state.aktiver_use_case:
+        uc_row = df_usecases[df_usecases[uc_col].astype(str).str.lower().str.strip() == st.session_state.aktiver_use_case.lower().strip()]
+        if not uc_row.empty:
+            aktuelle_richtung = str(uc_row.iloc[0][dir_col]).strip().upper()
+            
+            # Textzuweisung absichern (Prüfen, ob es valider String ist)
+            if prompt_col and pd.notna(uc_row.iloc[0][prompt_col]) and str(uc_row.iloc[0][prompt_col]).strip() != "":
+                chat_abfrage_text = str(uc_row.iloc[0][prompt_col]).strip()
                 
-                if st.session_state.aktiver_use_case == "Neue Information":
-                    chat_abfrage_text = "Bitte gib hier den neuen Text für die Spalte ein:"
-                else:
-                    if prompt_col and pd.notna(uc_row.iloc[0][prompt_col]):
-                        chat_abfrage_text = str(uc_row.iloc[0][prompt_col]).strip()
+            if danke_col and pd.notna(uc_row.iloc[0][danke_col]):
+                danke_text_template = str(uc_row.iloc[0][danke_col]).strip()
+            
+            if "bericht" in st.session_state.aktiver_use_case.lower():
+                st.write("")
+                bericht_optionen = [
+                    "⚠️ Offene Störungen", "✅ Behobene Störungen", "💡 Offenes Feedback",
+                    "❌ Ignoriertes Feedback", "🔍 Offene Wissenslücken", "📋 Gesamtübersicht"
+                ]
+                st.selectbox(
+                    label="Gewünschten System-Bericht auswählen:",
+                    options=bericht_optionen, index=None, placeholder="📋 Berichtstyp wählen...",
+                    key="system_report_select", label_visibility="collapsed"
+                )
+            
+            else:
+                if df_wissen is not None and not df_wissen.empty:
+                    bez_spalte = df_wissen.columns[0] if "Bezeichnung" not in df_wissen.columns else "Bezeichnung"
+                    kat_spalte = df_wissen.columns[1] if "Wo?" not in df_wissen.columns else "Wo?"
                     
-                if danke_col and pd.notna(uc_row.iloc[0][danke_col]):
-                    danke_text_template = str(uc_row.iloc[0][danke_col]).strip()
-                
-                if "bericht" in st.session_state.aktiver_use_case.lower():
                     st.write("")
-                    bericht_optionen = [
-                        "⚠️ Offene Störungen", "✅ Behobene Störungen", "💡 Offenes Feedback",
-                        "❌ Ignoriertes Feedback", "🔍 Offene Wissenslücken", "📋 Gesamtübersicht"
-                    ]
-                    st.selectbox(
-                        label="Gewünschten System-Bericht auswählen:",
-                        options=bericht_optionen, index=None, placeholder="📋 Berichtstyp wählen...",
-                        key="system_report_select", on_change=handle_report_selection_callback, label_visibility="collapsed"
-                    )
-                
-                else:
-                    if df_wissen is not None and not df_wissen.empty:
-                        bez_spalte = df_wissen.columns[0] if "Bezeichnung" not in df_wissen.columns else "Bezeichnung"
-                        kat_spalte = df_wissen.columns[1] if "Wo?" not in df_wissen.columns else "Wo?"
+                    
+                    # --- COMPONENT LOGIC FOR "NEUE INFORMATION" ---
+                    if st.session_state.aktive_rolle == "Host" and st.session_state.aktiver_use_case == "Neue Information":
+                        alle_objekte = df_wissen[bez_spalte].dropna().drop_duplicates().tolist()
+                        alle_objekte = sorted([str(b).strip() for b in alle_objekte])
+                        if "Nicht gefunden" in alle_objekte: alle_objekte.remove("Nicht gefunden")
+                        alle_objekte.append("Nicht gefunden")
                         
-                        st.write("")
+                        # Fixierter Text-Prompt für den Input Überschreibungs-Bug
+                        chat_abfrage_text = "Bitte gib hier den neuen Informationstext ein:"
                         
-                        # --- MODUS: NEUE INFORMATION (Sicherheits-Kaskade) ---
-                        if st.session_state.aktive_rolle == "Host" and st.session_state.aktiver_use_case == "Neue Information":
-                            alle_objekte = df_wissen[bez_spalte].dropna().drop_duplicates().tolist()
-                            alle_objekte = sorted([str(b).strip() for b in alle_objekte])
-                            if "Nicht gefunden" in alle_objekte: alle_objekte.remove("Nicht gefunden")
-                            alle_objekte.append("Nicht gefunden")
-                            
-                            # Erstes Dropdown: Objekt
-                            st.selectbox(
-                                label="🔎 Objekt auswählen:",
-                                options=alle_objekte, index=None, placeholder="🔎 Bitte wähle das Objekt aus...",
-                                key="direct_host_object_select", on_change=handle_direct_object_callback
+                        # Widget 1: Objekt
+                        val_obj = st.selectbox(
+                            label="🔎 Objekt auswählen:",
+                            options=alle_objekte, index=None, placeholder="🔎 Bitte wähle das Objekt aus...",
+                            key="direct_host_object_select"
+                        )
+                        st.session_state.aktuell_gewaehltes_objekt = val_obj
+                        
+                        # Widget 2: Lineare Verankerung -> Erscheint NUR wenn Widget 1 existiert
+                        if st.session_state.aktuell_gewaehltes_objekt:
+                            spalten_options = get_datenspalten_options(df_wissen)
+                            st.write("")
+                            val_col = st.selectbox(
+                                label="📍 Bitte wähle die Art der Information aus:",
+                                options=spalten_options, index=None, placeholder="📋 Art der Information wählen...",
+                                key="host_direct_col_select"
                             )
+                            gewaehlte_direktspalte = val_col
+                            st.session_state[f"target_col_{st.session_state.aktiver_use_case}"] = val_col
+                    
+                    # --- MODUS: GAST / STANDARD-FILTERUNG ---
+                    else:
+                        STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
+                        for kat in STANDARD_DROPDOWNS:
+                            if "innen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
+                            elif "außen" in kat.lower() or "aussen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("außen|aussen", case=False, na=False)
+                            else: mask = df_wissen[kat_spalte].astype(str).str.contains("nähe|naehe|In der Nähe", case=False, na=False)
                             
-                            # Zweites Dropdown: Erscheint erst stabil, wenn oben etwas ausgewählt wurde
-                            if st.session_state.aktuell_gewaehltes_objekt:
-                                spalten_options = get_datenspalten_options(df_wissen)
-                                st.write("")
-                                st.selectbox(
-                                    label="📍 Bitte wähle die Art der Information aus:",
-                                    options=spalten_options, index=None, placeholder="📋 Art der Information wählen...",
-                                    key="host_direct_col_select", on_change=handle_direct_col_callback
-                                )
-                                gewaehlte_direktspalte = st.session_state.get(f"target_col_{st.session_state.aktiver_use_case}")
-                        
-                        # --- STANDARD MODUS: GAST UND ANDERE USE CASES ---
-                        else:
-                            STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
-                            for kat in STANDARD_DROPDOWNS:
-                                if "innen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
-                                elif "außen" in kat.lower() or "aussen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("außen|aussen", case=False, na=False)
-                                else: mask = df_wissen[kat_spalte].astype(str).str.contains("nähe|naehe|In der Nähe", case=False, na=False)
-                                
-                                if st.session_state.aktive_rolle == "Gast" and "Relevanz Gast" in df_wissen.columns:
-                                    mask = mask & (df_wissen["Relevanz Gast"].astype(str).str.strip().str.lower() == "x")
-                                
-                                verfuegbare_bez = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
-                                verfuegbare_bez = sorted([str(b).strip() for b in verfuegbare_bez])
-                                if "Nicht gefunden" in verfuegbare_bez: verfuegbare_bez.remove("Nicht gefunden")
-                                verfuegbare_bez.append("Nicht gefunden")
-                                
-                                dp_key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
-                                
-                                val = st.selectbox(
-                                    label=f"hidden_{kat}", options=verfuegbare_bez, index=None, 
-                                    placeholder=f"🔎 {kat} wählen...", key=dp_key, label_visibility="collapsed"
-                                )
-                                if val:
-                                    st.session_state.aktuell_gewaehltes_objekt = val
+                            if st.session_state.aktive_rolle == "Gast" and "Relevanz Gast" in df_wissen.columns:
+                                mask = mask & (df_wissen["Relevanz Gast"].astype(str).str.strip().str.lower() == "x")
+                            
+                            verfuegbare_bez = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
+                            verfuegbare_bez = sorted([str(b).strip() for b in verfuegbare_bez])
+                            if "Nicht gefunden" in verfuegbare_bez: verfuegbare_bez.remove("Nicht gefunden")
+                            verfuegbare_bez.append("Nicht gefunden")
+                            
+                            dp_key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
+                            val = st.selectbox(
+                                label=f"hidden_{kat}", options=verfuegbare_bez, index=None, 
+                                placeholder=f"🔎 {kat} wählen...", key=dp_key, label_visibility="collapsed"
+                            )
+                            if val:
+                                st.session_state.aktuell_gewaehltes_objekt = val
 
 # ==============================================================================
 # 6.5 SYSTEM-DIAGNOSE MONITOR
 # ==============================================================================
 if st.session_state.debug_modus_aktiv:
     st.write("")
-    with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR (Laufzeit-Metriken)", expanded=True):
+    with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR", expanded=True):
         d_col1, d_col2 = st.columns(2)
         with d_col1:
-            st.metric(label="1. Aktive Rolle", value=str(st.session_state.get("aktive_rolle", "None")))
+            st.metric(label="1. Aktive Rolle", value=str(st.session_state.get("aktive_rolle")))
             st.metric(label="3. Gewähltes Objekt", value=str(st.session_state.aktuell_gewaehltes_objekt))
-            st.metric(label="4. Direkt-Zielspalte (Host)", value=str(st.session_state.get(f"target_col_{st.session_state.aktiver_use_case}")))
         with d_col2:
             st.metric(label="2. Use Case | Richtung", value=f"{st.session_state.get('aktiver_use_case')} | {aktuelle_richtung}")
-        
-        target_display_name = "Details Nutzung"
-        if df_lexikon is not None and not df_lexikon.empty:
-            target_display_name = str(df_lexikon.iloc[0, 0]).strip()
-            
-        st.write(f"**5. Letzter Matrix-Lesestatus Spalte '{target_display_name}':**")
-        if df_wissen is not None and not df_wissen.empty:
-            st.success(f"✅ Daten erfolgreich geladen ({len(df_wissen)} Objekte in Matrix verifiziert)")
-        else:
-            st.error(f"🛑 Lesefehler: Spalte '{target_display_name}' nicht synchronisiert.")
-        
-        st.write("**6. Letzter Matrix-Schreibstatus:**")
-        st.info(st.session_state.get("last_write_status", "Kein Status"))
-        
-        st.write("**7. Letzter Kontext-Extrakt (KI-Input):**")
-        st.text_area(label="Matrix-Rohdaten", value=st.session_state.get("last_extracted_context", ""), height=100, disabled=True, label_visibility="collapsed")
+            st.metric(label="4. Zielspalte", value=str(st.session_state.get(f"target_col_{st.session_state.aktiver_use_case}")))
 
 # ==============================================================================
-# 7. CHAT FLOW & DETERMINISTISCHES ROUTING
+# 7. CHAT FLOW & LOGIK-GATES
 # ==============================================================================
 st.write("---")
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
+# Striktes Gate: Wann darf das Eingabefeld gerendert werden?
 zeige_chat_input = False
 if st.session_state.aktiver_use_case and "bericht" not in st.session_state.aktiver_use_case.lower():
     if aktuelle_richtung == "OUTPUT":
         zeige_chat_input = True
     elif aktuelle_richtung == "INPUT":
         if st.session_state.aktiver_use_case == "Neue Information":
-            akt_col = st.session_state.get(f"target_col_{st.session_state.aktiver_use_case}")
-            if st.session_state.aktuell_gewaehltes_objekt and akt_col:
+            # NUR anzeigen, wenn Objekt UND Spalte gesetzt und ungleich None sind
+            if st.session_state.aktuell_gewaehltes_objekt and st.session_state.get(f"target_col_{st.session_state.aktiver_use_case}"):
                 zeige_chat_input = True
         else:
             zeige_chat_input = True
@@ -654,15 +578,10 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                 ki_text = structured_response.antwort_text
                 ki_text_lower = ki_text.lower()
                 
-                luecken_phrasen = [
-                    "keine information", "weiß ich nicht", "nicht hinterlegt", 
-                    "leider nein", "nicht bekannt", "fehlen mir details",
-                    "gern an die hosts weiter"
-                ]
+                luecken_phrasen = ["keine information", "weiß ich nicht", "nicht hinterlegt", "leider nein"]
                 
                 if ist_luecke or ki_text == "" or any(phrase in ki_text_lower for phrase in luecken_phrasen):
-                    with st.spinner("Sicherheitsnetz aktiv: Wissenslücke detektiert. Protokolliere..."):
-                        execute_transitional_routing(user_input, st.session_state.aktuell_gewaehltes_objekt)
+                    execute_transitional_routing(user_input, st.session_state.aktuell_gewaehltes_objekt)
                 else:
                     st.session_state.messages.append({"role": "assistant", "content": ki_text})
                 st.rerun()
