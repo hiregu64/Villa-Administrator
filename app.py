@@ -382,12 +382,14 @@ if neue_rolle is not None:
             if key.startswith("dropdown_") or key.startswith("target_col_"): del st.session_state[key]
         st.rerun()
 
-# Host-Passwort-Eingabebereich (Reagiert jetzt nativ und fehlerfrei auf ENTER)
+# ==============================================================================
+# INTERNE PRÜFUNG DES NATIVEN ENTER-EVENTS (Sichert Funktion ohne st.stop Blockade)
+# ==============================================================================
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
-    st.write("---")
-    pwd_input = st.text_input("🔑 Bitte Passwort für Host-Sicht eingeben und ENTER drücken:", type="password", key="host_pwd_field")
+    # Wenn im State bereits ein Passwort durch ENTER existiert, werten wir es VOR dem st.stop aus
+    pwd_aus_state = st.session_state.get("host_pwd_field", "").strip()
     
-    if pwd_input:
+    if pwd_aus_state != "":
         if df_passwoerter is not None and not df_passwoerter.empty:
             p_rolle_col = df_passwoerter.columns[0]
             p_pwd_col = df_passwoerter.columns[1]
@@ -399,7 +401,7 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
             treffer_gefunden = False
             for _, row in host_rows.iterrows():
                 gespeichertes_pwd = str(row[p_pwd_col]).strip()
-                if pwd_input.strip() == gespeichertes_pwd:
+                if pwd_aus_state == gespeichertes_pwd:
                     st.session_state.host_authentifiziert = True
                     st.session_state.aktive_rolle = "Host_Verifiziert"
                     treffer_gefunden = True
@@ -415,14 +417,19 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
                     break
             
             if treffer_gefunden:
-                st.success("Erfolgreich eingeloggt!")
                 st.rerun()
             else:
-                st.error("❌ Falsches Passwort. Zugriff verweigert.")
+                # Setze das Feld zurück, damit der Nutzer es neu versuchen kann
+                st.session_state["host_pwd_field"] = ""
+                st.error("❌ Falsches Passwort. Zugriff verweigert. Bitte erneut versuchen:")
         else:
             st.error("🛑 Passwort-Matrix 'Passwort_Lexikon' nicht geladen oder leer.")
-            
-    st.stop() # Hält die App hier an, AUSSER das Passwort war korrekt und st.rerun() wurde gefeuert
+
+    # Zeige das Feld an und blockiere erst danach das Weiterlaufen des restlichen Skripts
+    if not st.session_state.host_authentifiziert:
+        st.write("---")
+        st.text_input("🔑 Bitte Passwort für Host-Sicht eingeben und ENTER drücken:", type="password", key="host_pwd_field")
+        st.stop()
 
 # Initialisierung der Variablen
 aktuelles_objekt = None
