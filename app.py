@@ -357,6 +357,19 @@ def generate_raw_report_context(filter_type):
                     
     return "\n".join(report_lines) if report_lines else "Keine passenden Einträge gefunden."
 
+# Callback für Berichte-Wechsel
+def handle_report_selection_callback():
+    st.session_state.messages = []
+
+# Callback für Objekt-Wechsel im Direktmodus
+def handle_direct_object_callback():
+    st.session_state.aktuell_gewaehltes_objekt = st.session_state.get("direct_host_object_select")
+    st.session_state.messages = []
+
+# Callback für Spalten-Wechsel im Direktmodus
+def handle_direct_col_callback():
+    st.session_state[f"target_col_{st.session_state.aktiver_use_case}"] = st.session_state.get("host_direct_col_select")
+
 # ==============================================================================
 # NATIVE PASSPORT VALIDATION FUNCTION (on_change callback)
 # ==============================================================================
@@ -417,7 +430,8 @@ if neue_rolle is not None:
         st.session_state.aktuell_gewaehltes_objekt = None
         st.session_state.messages = []
         for key in list(st.session_state.keys()):
-            if key.startswith("dropdown_") or key.startswith("target_col_") or key == "system_report_select": del st.session_state[key]
+            if key.startswith("dropdown_") or key.startswith("target_col_") or key == "system_report_select" or "direct" in key: 
+                del st.session_state[key]
         st.rerun()
 
 # ==============================================================================
@@ -463,8 +477,8 @@ if st.session_state.aktive_rolle in ["Host", "Gast"]:
             erlaubte_buttons = verfuegbare_uc
 
         cols = st.columns(len(erlaubte_buttons))
-        neuer_use_case = st.session_state.aktiver_use_case
         
+        # Rendere Navigations-Buttons permanent und speichere Zustand stabil ab
         for idx, uc_name in enumerate(erlaubte_buttons):
             with cols[idx]:
                 is_active = (st.session_state.aktiver_use_case == uc_name)
@@ -475,22 +489,22 @@ if st.session_state.aktive_rolle in ["Host", "Gast"]:
                         button_label = str(btn_match.iloc[0][btn_col]).strip()
                 
                 if st.button(button_label, use_container_width=True, type="primary" if is_active else "secondary", key=f"btn_{uc_name}"):
-                    neuer_use_case = uc_name
+                    st.session_state.aktiver_use_case = uc_name
+                    st.session_state.aktuell_gewaehltes_objekt = None
+                    st.session_state.messages = []
+                    for key in list(st.session_state.keys()):
+                        if key.startswith("dropdown_") or key.startswith("target_col_") or key == "system_report_select" or "direct" in key: 
+                            del st.session_state[key]
+                    st.rerun()
 
-        if neuer_use_case != st.session_state.aktiver_use_case:
-            st.session_state.aktiver_use_case = neuer_use_case
-            st.session_state.aktuell_gewaehltes_objekt = None
-            st.session_state.messages = []
-            for key in list(st.session_state.keys()):
-                if key.startswith("dropdown_") or key.startswith("target_col_") or key == "system_report_select": del st.session_state[key]
-            st.rerun()
-
+        # ==============================================================================
+        # WEICHENSTEUERUNG FÜR AKTIVEN USE CASE (Unabhängig von Button-Klicks)
+        # ==============================================================================
         if st.session_state.aktiver_use_case:
             uc_row = df_usecases[df_usecases[uc_col].astype(str).str.lower().str.strip() == st.session_state.aktiver_use_case.lower().strip()]
             if not uc_row.empty:
                 aktuelle_richtung = str(uc_row.iloc[0][dir_col]).strip().upper()
                 
-                # --- ABFANGEN: Textüberschreibung bei "Neue Information" ---
                 if st.session_state.aktiver_use_case == "Neue Information":
                     chat_abfrage_text = "Bitte gib hier den neuen Text für die Spalte ein:"
                 else:
@@ -503,25 +517,15 @@ if st.session_state.aktive_rolle in ["Host", "Gast"]:
                 if "bericht" in st.session_state.aktiver_use_case.lower():
                     st.write("")
                     bericht_optionen = [
-                        "⚠️ Offene Störungen",
-                        "✅ Behobene Störungen",
-                        "💡 Offenes Feedback",
-                        "❌ Ignoriertes Feedback",
-                        "🔍 Offene Wissenslücken",
-                        "📋 Gesamtübersicht"
+                        "⚠️ Offene Störungen", "✅ Behobene Störungen", "💡 Offenes Feedback",
+                        "❌ Ignoriertes Feedback", "🔍 Offene Wissenslücken", "📋 Gesamtübersicht"
                     ]
-                    
                     st.selectbox(
                         label="Gewünschten System-Bericht auswählen:",
-                        options=bericht_optionen,
-                        index=None,
-                        placeholder="📋 Berichtstyp wählen...",
-                        key="system_report_select",
-                        on_change=handle_report_selection_callback,
-                        label_visibility="collapsed"
+                        options=bericht_optionen, index=None, placeholder="📋 Berichtstyp wählen...",
+                        key="system_report_select", on_change=handle_report_selection_callback, label_visibility="collapsed"
                     )
                 
-                # Filterung & Dropdown-Generierung
                 else:
                     if df_wissen is not None and not df_wissen.empty:
                         bez_spalte = df_wissen.columns[0] if "Bezeichnung" not in df_wissen.columns else "Bezeichnung"
@@ -529,39 +533,32 @@ if st.session_state.aktive_rolle in ["Host", "Gast"]:
                         
                         st.write("")
                         
-                        # --- RADIKALE KORREKTUR FÜR NEUE INFORMATION ---
+                        # --- MODUS: NEUE INFORMATION (Sicherheits-Kaskade) ---
                         if st.session_state.aktive_rolle == "Host" and st.session_state.aktiver_use_case == "Neue Information":
-                            # Ein einzelnes sauberes Dropdown für ALLE Objekte zur Konfliktvermeidung
                             alle_objekte = df_wissen[bez_spalte].dropna().drop_duplicates().tolist()
                             alle_objekte = sorted([str(b).strip() for b in alle_objekte])
                             if "Nicht gefunden" in alle_objekte: alle_objekte.remove("Nicht gefunden")
                             alle_objekte.append("Nicht gefunden")
                             
-                            gewaehltes_obj = st.selectbox(
+                            # Erstes Dropdown: Objekt
+                            st.selectbox(
                                 label="🔎 Objekt auswählen:",
-                                options=alle_objekte,
-                                index=None,
-                                placeholder="🔎 Bitte wähle das Objekt aus...",
-                                key="direct_host_object_select"
+                                options=alle_objekte, index=None, placeholder="🔎 Bitte wähle das Objekt aus...",
+                                key="direct_host_object_select", on_change=handle_direct_object_callback
                             )
-                            if gewaehltes_obj:
-                                st.session_state.aktuell_gewaehltes_objekt = gewaehltes_obj
                             
-                            # Wenn das Objekt feststeht, rendern wir das Spalten-Dropdown
+                            # Zweites Dropdown: Erscheint erst stabil, wenn oben etwas ausgewählt wurde
                             if st.session_state.aktuell_gewaehltes_objekt:
                                 spalten_options = get_datenspalten_options(df_wissen)
                                 st.write("")
-                                gewaehlte_direktspalte = st.selectbox(
+                                st.selectbox(
                                     label="📍 Bitte wähle die Art der Information aus:",
-                                    options=spalten_options,
-                                    index=None,
-                                    placeholder="📋 Art der Information wählen...",
-                                    key="host_direct_col_select"
+                                    options=spalten_options, index=None, placeholder="📋 Art der Information wählen...",
+                                    key="host_direct_col_select", on_change=handle_direct_col_callback
                                 )
-                                if gewaehlte_direktspalte:
-                                    st.session_state[f"target_col_{st.session_state.aktiver_use_case}"] = gewaehlte_direktspalte
+                                gewaehlte_direktspalte = st.session_state.get(f"target_col_{st.session_state.aktiver_use_case}")
                         
-                        # Standard-Verhalten für alle anderen Use Cases (Gast / Störungen / Feedback)
+                        # --- STANDARD MODUS: GAST UND ANDERE USE CASES ---
                         else:
                             STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
                             for kat in STANDARD_DROPDOWNS:
@@ -580,13 +577,9 @@ if st.session_state.aktive_rolle in ["Host", "Gast"]:
                                 dp_key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
                                 
                                 val = st.selectbox(
-                                    label=f"hidden_{kat}", 
-                                    options=verfuegbare_bez, 
-                                    index=None, 
-                                    placeholder=f"🔎 {kat} wählen...", 
-                                    key=dp_key, 
-                                    label_visibility="collapsed"
-                               )
+                                    label=f"hidden_{kat}", options=verfuegbare_bez, index=None, 
+                                    placeholder=f"🔎 {kat} wählen...", key=dp_key, label_visibility="collapsed"
+                                )
                                 if val:
                                     st.session_state.aktuell_gewaehltes_objekt = val
 
@@ -633,7 +626,6 @@ if st.session_state.aktiver_use_case and "bericht" not in st.session_state.aktiv
         zeige_chat_input = True
     elif aktuelle_richtung == "INPUT":
         if st.session_state.aktiver_use_case == "Neue Information":
-            # Das Chat-Eingabefeld öffnet sich erst, wenn Objekt UND Spalte gewählt sind!
             akt_col = st.session_state.get(f"target_col_{st.session_state.aktiver_use_case}")
             if st.session_state.aktuell_gewaehltes_objekt and akt_col:
                 zeige_chat_input = True
