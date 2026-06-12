@@ -50,7 +50,12 @@ if "last_extracted_context" not in st.session_state: st.session_state.last_extra
 def get_datenspalten_options(df):
     if df is None: return []
     geschuetzt = ["bezeichnung", "wo?", "id", "kategorie", "relevanz gast"]
-    return [c for c in df.columns if "status" not in c.lower() and c.lower().strip() not in geschuetzt]
+    ergebnis = []
+    for col in df.columns:
+        col_clean = str(col).strip().lower()
+        if "status" not in col_clean and col_clean not in geschuetzt:
+            ergebnis.append(str(col).strip())
+    return ergebnis
 
 # ==============================================================================
 # 3. DATEN-LADE ENGINE (Vier-Blatt-Modell mit header=0 laut Spezifikation)
@@ -355,6 +360,33 @@ def generate_raw_report_context(filter_type):
 def reset_chat_flow():
     st.session_state.messages = []
 
+# --- KORREKTUR: on_change Callback für die Berichts-Auswahl ---
+def handle_report_selection_callback():
+    label = st.session_state.get("system_report_select")
+    if not label:
+        return
+        
+    bericht_optionen = {
+        "⚠️ Offene Störungen": "offene_stoerungen",
+        "✅ Behobene Störungen": "behobene_stoerungen",
+        "💡 Offenes Feedback": "offenes_feedback",
+        "❌ Ignoriertes Feedback": "ignoriertes_feedback",
+        "🔍 Offene Wissenslücken": "offene_luecken",
+        "📋 Gesamtübersicht": "gesamtuebersicht"
+    }
+    
+    filter_type = bericht_optionen.get(label)
+    if filter_type:
+        st.session_state.messages = [] # Chat leeren für neuen Bericht
+        report_data_str = generate_raw_report_context(filter_type)
+        if "Keine passenden Einträge" in report_data_str:
+            report_output = f"Aktuell liegen keine Einträge für den Filter '{label}' vor. ☀️"
+        else:
+            prompt = f"Du bist der administrative Analyst. Strukturiere diese Matrix-Daten professionell und chronologisch für den Host:\n\n{report_data_str}"
+            report_output = call_gemini_api_raw(prompt, system_context="Liste Fakten auf, nutze Bulletpoints, bleibe sachlich.")
+        
+        st.session_state.messages.append({"role": "assistant", "content": report_output})
+
 # ==============================================================================
 # NATIVE PASSPORT VALIDATION FUNCTION (on_change callback)
 # ==============================================================================
@@ -376,7 +408,6 @@ def check_password_callback():
                 st.session_state.host_authentifiziert = True
                 st.session_state["pwd_error_msg"] = None
                 
-                # Prüfe auf Debug-Funktion im Passwort
                 if p_func_col and pd.notna(row[p_func_col]):
                     debug_kriterium = "debug"
                     if len(host_rows) > 1:
@@ -398,7 +429,6 @@ st.title("☀️ Villa Avatar")
 if "aktive_rolle" not in st.session_state: st.session_state.aktive_rolle = None
 if "aktiver_use_case" not in st.session_state: st.session_state.aktiver_use_case = None
 if "messages" not in st.session_state: st.session_state.messages = []
-if "bericht_filter" not in st.session_state: st.session_state.bericht_filter = None
 if "host_authentifiziert" not in st.session_state: st.session_state.host_authentifiziert = False
 if "debug_modus_aktiv" not in st.session_state: st.session_state.debug_modus_aktiv = False
 
@@ -406,25 +436,22 @@ if "debug_modus_aktiv" not in st.session_state: st.session_state.debug_modus_akt
 neue_rolle = st.selectbox("Rolle", options=["Gast", "Host"], index=None, placeholder="Wer bist du?", label_visibility="collapsed")
 
 if neue_rolle is not None:
-    # 1. LOGOUT-LOGIK: Wenn explizit zu "Gast" gewechselt wird, Sitzung komplett zerstören!
     if neue_rolle == "Gast":
         st.session_state.host_authentifiziert = False
         st.session_state.debug_modus_aktiv = False
         st.session_state["pwd_error_msg"] = None
         st.session_state["host_pwd_field"] = ""
 
-    # 2. Wenn sich die Rolle ändert (oder von Gast wieder auf Host zurückgewechselt wird)
     if neue_rolle != st.session_state.aktive_rolle:
         st.session_state.aktive_rolle = neue_rolle
         st.session_state.aktiver_use_case = None
-        st.session_state.bericht_filter = None
         st.session_state.messages = []
         for key in list(st.session_state.keys()):
-            if key.startswith("dropdown_") or key.startswith("target_col_"): del st.session_state[key]
+            if key.startswith("dropdown_") or key.startswith("target_col_") or key == "system_report_select": del st.session_state[key]
         st.rerun()
 
 # ==============================================================================
-# HOST-LOGIN BLOCKIERUNG (Greift NUR, wenn noch nicht authentifiziert)
+# HOST-LOGIN BLOCKIERUNG
 # ==============================================================================
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     st.write("---")
@@ -437,7 +464,7 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
         key="host_pwd_field",
         on_change=check_password_callback
     )
-    st.stop()  # Friert das Skript ein, bis on_change feuert
+    st.stop()
 
 # Initialisierung der Variablen
 aktuelles_objekt = None
@@ -447,7 +474,6 @@ gewaehlte_direktspalte = None
 chat_abfrage_text = "Wie kann ich dir helfen?"
 danke_text_template = "Vielen Dank! Ich habe deine Eingabe zum Thema '{use_case}' für die Hosts eingetragen."
 
-# Erlaubte Rollen-Zustände abfangen
 if st.session_state.aktive_rolle in ["Host", "Gast"]:
     if df_usecases is not None:
         st.write("---")
@@ -485,10 +511,9 @@ if st.session_state.aktive_rolle in ["Host", "Gast"]:
 
         if neuer_use_case != st.session_state.aktiver_use_case:
             st.session_state.aktiver_use_case = neuer_use_case
-            st.session_state.bericht_filter = None
             st.session_state.messages = []
             for key in list(st.session_state.keys()):
-                if key.startswith("dropdown_") or key.startswith("target_col_"): del st.session_state[key]
+                if key.startswith("dropdown_") or key.startswith("target_col_") or key == "system_report_select": del st.session_state[key]
             st.rerun()
 
         if st.session_state.aktiver_use_case:
@@ -502,27 +527,27 @@ if st.session_state.aktive_rolle in ["Host", "Gast"]:
                 if danke_col and pd.notna(uc_row.iloc[0][danke_col]):
                     danke_text_template = str(uc_row.iloc[0][danke_col]).strip()
                 
-                # Berichtsauswahl für administrative Rollen
+                # --- KORREKTUR: Berichts-Dropdown mit persistentem Key und on_change Callback ---
                 if "bericht" in st.session_state.aktiver_use_case.lower():
                     st.write("")
-                    bericht_optionen = {
-                        "⚠️ Offene Störungen": "offene_stoerungen",
-                        "✅ Behobene Störungen": "behobene_stoerungen",
-                        "💡 Offenes Feedback": "offenes_feedback",
-                        "❌ Ignoriertes Feedback": "ignoriertes_feedback",
-                        "🔍 Offene Wissenslücken": "offene_luecken",
-                        "📋 Gesamtübersicht": "gesamtuebersicht"
-                    }
+                    bericht_optionen = [
+                        "⚠️ Offene Störungen",
+                        "✅ Behobene Störungen",
+                        "💡 Offenes Feedback",
+                        "❌ Ignoriertes Feedback",
+                        "🔍 Offene Wissenslücken",
+                        "📋 Gesamtübersicht"
+                    ]
                     
-                    gewaehlter_bericht_label = st.selectbox(
+                    st.selectbox(
                         label="Gewünschten System-Bericht auswählen:",
-                        options=list(bericht_optionen.keys()),
+                        options=bericht_optionen,
                         index=None,
                         placeholder="📋 Berichtstyp wählen...",
+                        key="system_report_select",
+                        on_change=handle_report_selection_callback,
                         label_visibility="collapsed"
                     )
-                    if gewaehlter_bericht_label:
-                        st.session_state.bericht_filter = bericht_optionen[gewaehlter_bericht_label]
                 
                 # Filterung & Kaskaden-Dropdowns für Objekte
                 else:
@@ -554,15 +579,15 @@ if st.session_state.aktive_rolle in ["Host", "Gast"]:
                                 aktuelles_objekt = val
                                 break
                         
-                        # Spaltenauswahl-Dropdown für "Neue Information"
                         if st.session_state.aktive_rolle == "Host" and st.session_state.aktiver_use_case == "Neue Information" and aktuelles_objekt:
                             spalten_options = get_datenspalten_options(df_wissen)
                             col_key = f"target_col_{st.session_state.aktiver_use_case}"
+                            
                             gewaehlte_direktspalte = st.selectbox(
-                                label="Zieldokumentation Spalte wählen:",
+                                label="📍 In welche Matrix-Spalte soll dokumentiert werden?",
                                 options=spalten_options,
                                 index=None,
-                                placeholder="📍 In welche Matrix-Spalte soll dokumentiert werden?...",
+                                placeholder="Wähle die Zielspalte aus...",
                                 key="host_direct_col_select"
                             )
                             if gewaehlte_direktspalte:
@@ -603,19 +628,6 @@ if st.session_state.debug_modus_aktiv:
 # ==============================================================================
 # 7. CHAT FLOW & DETERMINISTISCHES ROUTING
 # ==============================================================================
-if st.session_state.aktiver_use_case and "bericht" in st.session_state.aktiver_use_case.lower() and st.session_state.bericht_filter:
-    with st.spinner("Analysiere Datenbasis und generiere Systembericht..."):
-        report_data_str = generate_raw_report_context(st.session_state.bericht_filter)
-        if "Keine passenden Einträge" in report_data_str:
-            report_output = f"Aktuell liegen keine Einträge für den Filter '{st.session_state.bericht_filter}' vor. ☀️"
-        else:
-            prompt = f"Du bist der administrative Analyst. Strukturiere diese Matrix-Daten professionell und chronologisch für den Host:\n\n{report_data_str}"
-            report_output = call_gemini_api_raw(prompt, system_context="Liste Fakten auf, nutze Bulletpoints, bleibe sachlich.")
-        
-        st.session_state.messages.append({"role": "assistant", "content": report_output})
-        st.session_state.bericht_filter = None
-        st.rerun()
-
 st.write("---")
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]): st.markdown(msg["content"])
