@@ -152,7 +152,6 @@ def call_gemini_api_structured(prompt, context="", system_context=None):
             antwort_text=str(data.get("antwort_text", ""))
         )
     except Exception as e:
-        # Fallback bei Quota-Überschreitung
         return KiAntwortSchema(wissensluecke_erkannt=True, antwort_text="")
 
 def call_gemini_api_raw(prompt, system_context=None):
@@ -360,7 +359,6 @@ def generate_raw_report_context(filter_type):
 
 def reset_chat_flow():
     st.session_state.messages = []
-    # Bei Änderung eines Objekt-Dropdowns suchen wir den neu gewählten Wert
     for key in st.session_state.keys():
         if key.startswith("dropdown_") and st.session_state[key] is not None:
             st.session_state.aktuell_gewaehltes_objekt = st.session_state[key]
@@ -525,8 +523,12 @@ if st.session_state.aktive_rolle in ["Host", "Gast"]:
             if not uc_row.empty:
                 aktuelle_richtung = str(uc_row.iloc[0][dir_col]).strip().upper()
                 
-                if prompt_col and pd.notna(uc_row.iloc[0][prompt_col]):
-                    chat_abfrage_text = str(uc_row.iloc[0][prompt_col]).strip()
+                # --- KORREKTUR: Filtert die strukturelle Tabellenanweisung bei "Neue Information" aus ---
+                if st.session_state.aktiver_use_case == "Neue Information":
+                    chat_abfrage_text = "Bitte gib hier den neuen Text für die Spalte ein:"
+                else:
+                    if prompt_col and pd.notna(uc_row.iloc[0][prompt_col]):
+                        chat_abfrage_text = str(uc_row.iloc[0][prompt_col]).strip()
                     
                 if danke_col and pd.notna(uc_row.iloc[0][danke_col]):
                     danke_text_template = str(uc_row.iloc[0][danke_col]).strip()
@@ -576,17 +578,18 @@ if st.session_state.aktive_rolle in ["Host", "Gast"]:
                             dp_key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
                             st.selectbox(label=f"hidden_{kat}", options=verfuegbare_bez, index=None, placeholder=f"🔎 {kat} wählen...", key=dp_key, on_change=reset_chat_flow, label_visibility="collapsed")
                         
-                        # --- KORREKTUR: Abfrage über den persistenten State ---
+                        # --- KORREKTUR: Spaltenabfrage (Zweites Dropdown) ---
                         if st.session_state.aktive_rolle == "Host" and st.session_state.aktiver_use_case == "Neue Information" and st.session_state.aktuell_gewaehltes_objekt:
                             spalten_options = get_datenspalten_options(df_wissen)
                             col_key = f"target_col_{st.session_state.aktiver_use_case}"
                             
-                            # Das zweite Dropdown zur Spaltenabfrage
+                            st.write("")
+                            # Das funktionale zweite Dropdown
                             gewaehlte_direktspalte = st.selectbox(
-                                label="📍 In welche Matrix-Spalte soll dokumentiert werden?",
+                                label="📍 Bitte wähle die Art der Information (Zielspalte) aus:",
                                 options=spalten_options,
                                 index=None,
-                                placeholder="Wähle die Zielspalte aus...",
+                                placeholder="📋 Art der Information wählen...",
                                 key="host_direct_col_select"
                             )
                             if gewaehlte_direktspalte:
@@ -637,6 +640,7 @@ if st.session_state.aktiver_use_case and "bericht" not in st.session_state.aktiv
         zeige_chat_input = True
     elif aktuelle_richtung == "INPUT":
         if st.session_state.aktiver_use_case == "Neue Information":
+            # Das Chat-Feld öffnet sich erst, wenn Objekt UND Spalte gewählt wurden!
             if st.session_state.aktuell_gewaehltes_objekt and gewaehlte_direktspalte:
                 zeige_chat_input = True
         else:
