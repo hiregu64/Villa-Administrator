@@ -356,7 +356,7 @@ def reset_chat_flow():
     st.session_state.messages = []
 
 # ==============================================================================
-# NATIVE ON-CHANGE PRÜFUNG (Wird sofort beim Drücken von ENTER getriggert)
+# NATIVE PASSPORT VALIDATION FUNCTION (on_change callback)
 # ==============================================================================
 def check_password_callback():
     pwd_input = st.session_state.get("host_pwd_field", "").strip()
@@ -374,9 +374,9 @@ def check_password_callback():
         for _, row in host_rows.iterrows():
             if pwd_input == str(row[p_pwd_col]).strip():
                 st.session_state.host_authentifiziert = True
-                st.session_state.aktive_rolle = "Host_Verifiziert"
                 st.session_state["pwd_error_msg"] = None
                 
+                # Prüfe auf Debug-Funktion im Passwort
                 if p_func_col and pd.notna(row[p_func_col]):
                     debug_kriterium = "debug"
                     if len(host_rows) > 1:
@@ -386,12 +386,12 @@ def check_password_callback():
                 return
         
         st.session_state["pwd_error_msg"] = "❌ Falsches Passwort. Zugriff verweigert."
-        st.session_state["host_pwd_field"] = ""  # Feld leeren bei Fehler
+        st.session_state["host_pwd_field"] = ""
     else:
-        st.session_state["pwd_error_msg"] = "🛑 Passwort-Matrix 'Passwort_Lexikon' fehlt."
+        st.session_state["pwd_error_msg"] = "🛑 Passwort-Matrix fehlt."
 
 # ==============================================================================
-# 6. HMI PRESENTATION LAYER (Fixierte Titelzeile und radikaler Reset)
+# 6. HMI PRESENTATION LAYER
 # ==============================================================================
 st.title("☀️ Villa Avatar")
 
@@ -406,23 +406,28 @@ if "debug_modus_aktiv" not in st.session_state: st.session_state.debug_modus_akt
 neue_rolle = st.selectbox("Rolle", options=["Gast", "Host"], index=None, placeholder="Wer bist du?", label_visibility="collapsed")
 
 if neue_rolle is not None:
+    # 1. LOGOUT-LOGIK: Wenn explizit zu "Gast" gewechselt wird, Sitzung komplett zerstören!
+    if neue_rolle == "Gast":
+        st.session_state.host_authentifiziert = False
+        st.session_state.debug_modus_aktiv = False
+        st.session_state["pwd_error_msg"] = None
+        st.session_state["host_pwd_field"] = ""
+
+    # 2. Wenn sich die Rolle ändert (oder von Gast wieder auf Host zurückgewechselt wird)
     if neue_rolle != st.session_state.aktive_rolle:
         st.session_state.aktive_rolle = neue_rolle
         st.session_state.aktiver_use_case = None
         st.session_state.bericht_filter = None
-        st.session_state.host_authentifiziert = False
-        st.session_state.debug_modus_aktiv = False
-        st.session_state["pwd_error_msg"] = None
         st.session_state.messages = []
         for key in list(st.session_state.keys()):
             if key.startswith("dropdown_") or key.startswith("target_col_"): del st.session_state[key]
         st.rerun()
 
-# Host-Passwort-Eingabebereich mit nativem Callback
+# ==============================================================================
+# HOST-LOGIN BLOCKIERUNG (Greift NUR, wenn noch nicht authentifiziert)
+# ==============================================================================
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     st.write("---")
-    
-    # Eventuelle Fehlermeldung anzeigen
     if st.session_state.get("pwd_error_msg"):
         st.error(st.session_state["pwd_error_msg"])
         
@@ -432,7 +437,7 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
         key="host_pwd_field",
         on_change=check_password_callback
     )
-    st.stop()
+    st.stop()  # Friert das Skript ein, bis on_change feuert
 
 # Initialisierung der Variablen
 aktuelles_objekt = None
@@ -443,7 +448,7 @@ chat_abfrage_text = "Wie kann ich dir helfen?"
 danke_text_template = "Vielen Dank! Ich habe deine Eingabe zum Thema '{use_case}' für die Hosts eingetragen."
 
 # Erlaubte Rollen-Zustände abfangen
-if st.session_state.aktive_rolle in ["Host", "Host_Verifiziert"] or st.session_state.aktive_rolle == "Gast":
+if st.session_state.aktive_rolle in ["Host", "Gast"]:
     if df_usecases is not None:
         st.write("---")
         
@@ -550,7 +555,7 @@ if st.session_state.aktive_rolle in ["Host", "Host_Verifiziert"] or st.session_s
                                 break
                         
                         # Spaltenauswahl-Dropdown für "Neue Information"
-                        if st.session_state.aktive_rolle == "Host_Verifiziert" and st.session_state.aktiver_use_case == "Neue Information" and aktuelles_objekt:
+                        if st.session_state.aktive_rolle == "Host" and st.session_state.aktiver_use_case == "Neue Information" and aktuelles_objekt:
                             spalten_options = get_datenspalten_options(df_wissen)
                             col_key = f"target_col_{st.session_state.aktiver_use_case}"
                             gewaehlte_direktspalte = st.selectbox(
@@ -566,7 +571,7 @@ if st.session_state.aktive_rolle in ["Host", "Host_Verifiziert"] or st.session_s
                                 gewaehlte_direktspalte = st.session_state.get(col_key)
 
 # ==============================================================================
-# 6.5 SYSTEM-DIAGNOSE MONITOR
+# 6.5 SYSTEM-DIAGNOSE MONITOR (Aktiviert durch das Debug-Passwort)
 # ==============================================================================
 if st.session_state.debug_modus_aktiv:
     st.write("")
