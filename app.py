@@ -285,20 +285,14 @@ def generate_raw_report_context(filter_type):
                     report_lines.append(f"Objekt: {row[bez_col]} | Kat: {col}\nEintrag: {cell_val}\n---")
     return "\n".join(report_lines) if report_lines else "Keine passenden Einträge gefunden."
 
-# ==============================================================================
-# NATIVE PASSPORT VALIDATION CALLBACK
-# ==============================================================================
-def check_password_callback():
-    pwd_input = st.session_state.get("host_pwd_field", "").strip()
-    if pwd_input == "" or df_passwoerter is None or df_passwoerter.empty: return
+def check_password_direct(pwd_input):
+    if not pwd_input or df_passwoerter is None or df_passwoerter.empty: return False
     p_rolle_col, p_pwd_col = df_passwoerter.columns[0], df_passwoerter.columns[1]
     host_rows = df_passwoerter[df_passwoerter[p_rolle_col].astype(str).str.strip().str.lower() == str(df_passwoerter.iloc[0][p_rolle_col]).strip().lower()]
     for _, row in host_rows.iterrows():
-        if pwd_input == str(row[p_pwd_col]).strip():
-            st.session_state.host_authentifiziert = True
-            st.session_state["pwd_error_msg"] = None
-            return
-    st.session_state["pwd_error_msg"] = "❌ Falsches Passwort."
+        if str(pwd_input).strip() == str(row[p_pwd_col]).strip():
+            return True
+    return False
 
 # ==============================================================================
 # 6. HMI PRESENTATION LAYER
@@ -311,6 +305,7 @@ if "messages" not in st.session_state: st.session_state.messages = []
 if "host_authentifiziert" not in st.session_state: st.session_state.host_authentifiziert = False
 if "aktuell_gewaehltes_objekt" not in st.session_state: st.session_state.aktuell_gewaehltes_objekt = None
 
+# SCHRITT 1: Rollen-Auswahl
 neue_rolle = st.selectbox("Rolle", options=["Gast", "Host"], index=None, placeholder="Wer bist du?", label_visibility="collapsed")
 
 if neue_rolle is not None and neue_rolle != st.session_state.aktive_rolle:
@@ -318,16 +313,26 @@ if neue_rolle is not None and neue_rolle != st.session_state.aktive_rolle:
     st.session_state.aktiver_use_case = None
     st.session_state.aktuell_gewaehltes_objekt = None
     st.session_state.messages = []
+    if neue_rolle == "Gast":
+        st.session_state.host_authentifiziert = False
     for key in list(st.session_state.keys()):
         if any(x in key for x in ["dropdown_", "target_col_", "direct_", "host_"]): del st.session_state[key]
     st.rerun()
 
+# SCHRITT 2: Sofortige Passwortabfrage bei Host (Harter Block vor allem anderen)
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     st.write("---")
-    if st.session_state.get("pwd_error_msg"): st.error(st.session_state["pwd_error_msg"])
-    st.text_input("🔑 Passwort eingeben:", type="password", key="host_pwd_field", on_change=check_password_callback)
-    st.stop()
+    pwd_field = st.text_input("🔑 Passwort eingeben & mit ENTER bestätigen:", type="password", key="host_pwd_raw_input")
+    
+    if pwd_field:
+        if check_password_direct(pwd_field):
+            st.session_state.host_authentifiziert = True
+            st.rerun()
+        else:
+            st.error("❌ Falsches Passwort. Zugriff verweigert.")
+    st.stop() # Stoppt hier absolut, bis das Passwort korrekt eingegeben wurde
 
+# SCHRITT 3: Use-Case-Auswahl (Wird erst nach erfolgreichem Login / bzw. für Gäste sofort gerendert)
 aktuelle_richtung = None
 chat_abfrage_text = "Wie kann ich dir helfen?"
 danke_text_template = "Vielen Dank! Ich habe deine Eingabe zum Thema '{use_case}' eingetragen."
@@ -355,12 +360,10 @@ if st.session_state.aktive_rolle in ["Host", "Gast"] and df_usecases is not None
                 st.session_state.aktuell_gewaehltes_objekt = None
                 st.session_state.messages = []
                 for key in list(st.session_state.keys()):
-                    if any(x in key for x in ["dropdown_", "target_col_", "direct_", "host_"]): del st.session_state[key]
+                    if any(x in key for x in ["dropdown_", "target_col_", "direct_"]): del st.session_state[key]
                 st.rerun()
 
-    # ==============================================================================
-    # CRITICAL INLINE GATING SYSTEM (Verhindert fehlerhaftes Absinken der Logik)
-    # ==============================================================================
+    # SCHRITT 4: Objektauswahl & Kategorie-Filterung
     if st.session_state.aktiver_use_case:
         uc_row = df_usecases[df_usecases[uc_col].astype(str).str.lower().str.strip() == st.session_state.aktiver_use_case.lower().strip()]
         if not uc_row.empty:
@@ -376,14 +379,14 @@ if st.session_state.aktive_rolle in ["Host", "Gast"] and df_usecases is not None
                 rep_sel = st.selectbox("📋 Berichtstyp wählen:", options=bericht_optionen, index=None, label_visibility="collapsed")
                 if rep_sel:
                     st.text_area("Berichtsinhalt", value=generate_raw_report_context(rep_sel), height=300, disabled=True, label_visibility="collapsed")
-                st.stop() # Bericht-Modus beendet hier das Skript komplett (kein Chatfenster!)
+                st.stop()
             
             else:
                 if df_wissen is not None and not df_wissen.empty:
                     bez_spalte = "Bezeichnung" if "Bezeichnung" in df_wissen.columns else df_wissen.columns[0]
                     kat_spalte = "Wo?" if "Wo?" in df_wissen.columns else df_wissen.columns[1]
                     
-                    # --- HARTE STRUKTUR FÜR "NEUE INFORMATION" ---
+                    # Spezial-Dropdowns für "Neue Information"
                     if st.session_state.aktive_rolle == "Host" and st.session_state.aktiver_use_case == "Neue Information":
                         alle_objekte = sorted([str(b).strip() for b in df_wissen[bez_spalte].dropna().drop_duplicates().tolist()])
                         if "Nicht gefunden" in alle_objekte: alle_objekte.remove("Nicht gefunden")
@@ -391,25 +394,21 @@ if st.session_state.aktive_rolle in ["Host", "Gast"] and df_usecases is not None
                         
                         chat_abfrage_text = "Bitte gib hier den neuen Informationstext ein:"
                         
-                        # Dropdown 1: Objekt-Auswahl mit isoliertem Key Namespace
                         val_obj = st.selectbox("🔎 Objekt auswählen:", options=alle_objekte, index=None, key=f"direct_obj_{st.session_state.aktiver_use_case}")
                         st.session_state.aktuell_gewaehltes_objekt = val_obj
                         
-                        # HARD GATE: Wenn kein Objekt gewählt ist, brechen wir HIER ab -> Verhindert das Chatfeld!
                         if not val_obj:
                             st.stop()
                         
-                        # Dropdown 2: Rendert absolut isoliert erst NACH dem Gate
                         spalten_options = get_datenspalten_options(df_wissen)
                         st.write("")
                         val_col = st.selectbox("📍 Bitte wähle die Art der Information aus:", options=spalten_options, index=None, key=f"direct_col_{st.session_state.aktiver_use_case}")
                         st.session_state[f"target_col_{st.session_state.aktiver_use_case}"] = val_col
                         
-                        # HARD GATE 2: Wenn die Spalte noch nicht gewählt ist, stoppen -> Keine Chat-Eingabe erlauben!
                         if not val_col:
                             st.stop()
                     
-                    # --- STANDARDFILTER FÜR ANDERE MODI ---
+                    # Standard-Dropdowns für andere Modi
                     else:
                         STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
                         for kat in STANDARD_DROPDOWNS:
@@ -427,7 +426,7 @@ if st.session_state.aktive_rolle in ["Host", "Gast"] and df_usecases is not None
                             if val: st.session_state.aktuell_gewaehltes_objekt = val
 
 # ==============================================================================
-# 7. CHAT FLOW LAYER (Wird nur erreicht, wenn alle Gates oben passiert wurden)
+# 7. CHAT FLOW LAYER
 # ==============================================================================
 st.write("---")
 for msg in st.session_state.messages:
