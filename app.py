@@ -41,12 +41,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# CENTRAL STATE MACHINE - Explizites Zustandsgitter gegen UI-Sprünglichkeit
+# CENTRAL STATE MACHINE
 # ==============================================================================
 if "aktive_rolle" not in st.session_state: st.session_state.aktive_rolle = None
 if "aktiver_use_case" not in st.session_state: st.session_state.aktiver_use_case = None
 if "selected_object" not in st.session_state: st.session_state.selected_object = None
-if "selected_column" not in st.session_state: st.session_state.selected_column = None
 if "messages" not in st.session_state: st.session_state.messages = []
 if "host_authentifiziert" not in st.session_state: st.session_state.host_authentifiziert = False
 if "debug_modus_aktiv" not in st.session_state: st.session_state.debug_modus_aktiv = False
@@ -59,7 +58,7 @@ def get_datenspalten_options(df):
     return [str(col).strip() for col in df.columns if "status" not in str(col).lower() and str(col).strip().lower() not in geschuetzt]
 
 # ==============================================================================
-# 3. DATEN-LADE ENGINE (Vier-Blatt-Modell mit header=0 laut Spezifikation)
+# 3. DATEN-LADE ENGINE (Vier-Blatt-Modell laut Spezifikation)
 # ==============================================================================
 @st.cache_data(ttl=30)
 def load_dynamic_data():
@@ -179,7 +178,7 @@ def extract_context_for_object(objekt_name):
     return final_context
 
 # ==============================================================================
-# 5. MATRIZEN-SCHREIBENGINE (openpyxl / Text in Blau #1F4E78 laut Kapitel 6.4.3)
+# 5. MATRIZEN-SCHREIBENGINE
 # ==============================================================================
 def execute_matrix_input_direct(physische_zielspalte, objekt_name, freitext):
     if drive_service is None or df_wissen is None: return
@@ -290,13 +289,12 @@ if selected_role and selected_role != st.session_state.aktive_rolle:
     st.session_state.aktive_rolle = selected_role
     st.session_state.aktiver_use_case = None
     st.session_state.selected_object = None
-    st.session_state.selected_column = None
     st.session_state.messages = []
     st.rerun()
 
 if not st.session_state.aktive_rolle: st.stop()
 
-# Host-Sicherheitsgate
+# Host-Passwort-Gate
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     st.write("---")
     pwd_input = st.text_input("🔑 Bitte Passwort für Host-Sicht eingeben:", type="password")
@@ -313,26 +311,34 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
         st.error("❌ Falsches Passwort.")
     st.stop()
 
-# Use Case Selektion (Buttons)
+# Use Case Selektion mit ausführlichen Spaltentexten (Button_HMI)
 st.write("---")
 if df_usecases is not None:
     uc_col, dir_col, hmi_col = df_usecases.columns[0], df_usecases.columns[1], df_usecases.columns[2]
+    btn_col = df_usecases.columns[3] if len(df_usecases.columns) > 3 else None
+    
     all_uc = df_usecases[df_usecases[hmi_col].astype(str).str.lower().str.strip() == "ja"][uc_col].tolist()
     erlaubte_buttons = [uc for uc in all_uc if any(x in uc.lower() for x in ["hilfe", "störung", "feedback"])] if st.session_state.aktive_rolle == "Gast" else all_uc
     
     cols = st.columns(len(erlaubte_buttons))
     for idx, uc_name in enumerate(erlaubte_buttons):
         with cols[idx]:
-            if st.button(uc_name, use_container_width=True, type="primary" if st.session_state.aktiver_use_case == uc_name else "secondary"):
+            # Auslesung des ausführlichen Textes aus Spalte 4 (Button_HMI)
+            button_label = uc_name
+            if btn_col:
+                btn_match = df_usecases[df_usecases[uc_col].astype(str).str.strip() == str(uc_name).strip()]
+                if not btn_match.empty and pd.notna(btn_match.iloc[0][btn_col]):
+                    button_label = str(btn_match.iloc[0][btn_col]).strip()
+            
+            if st.button(button_label, use_container_width=True, type="primary" if st.session_state.aktiver_use_case == uc_name else "secondary"):
                 st.session_state.aktiver_use_case = uc_name
                 st.session_state.selected_object = None
-                st.session_state.selected_column = None
                 st.session_state.messages = []
                 st.rerun()
 
 if not st.session_state.aktiver_use_case: st.stop()
 
-# Dynamic Text Extraction from UseCase_Lexikon
+# Metadaten aus dem UseCase_Lexikon
 uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == st.session_state.aktiver_use_case.lower().strip()]
 aktuelle_richtung = str(uc_row.iloc[0][df_usecases.columns[1]]).strip().upper() if not uc_row.empty else "OUTPUT"
 chat_abfrage_text = str(uc_row.iloc[0][df_usecases.columns[4]]).strip() if not uc_row.empty and len(df_usecases.columns) > 4 and pd.notna(uc_row.iloc[0][df_usecases.columns[4]]) else "Wie kann ich dir helfen?"
@@ -371,18 +377,21 @@ elif st.session_state.aktiver_use_case == "Neue Information" and st.session_stat
             info_text = st.text_area(f"Gib hier den neuen Informationstext für '{obj_wahl}' ➔ '{feld_wahl}' ein:", height=120)
             if st.form_submit_button("💾 Eintrag in Excel-Zentralmatrix speichern", type="primary") and info_text.strip():
                 with st.spinner("Schreibe in Zentralmatrix..."):
-                    execute_matrix_input_direct(feld_wahl, obj_wahl, info_text.strip())
+                    execute_matrix_write_direct(feld_wahl, obj_wahl, info_text.strip())
                     st.success(f"Erfolgreich eingetragen! Das Thema '{feld_wahl}' wurde für das Objekt '{obj_wahl}' aktualisiert.")
     st.stop()
 
 # ==============================================================================
-# WELT 2: FLEXIBLER KI-CHAT-MODUS (Hilfe, Störung, Feedback)
+# WELT 2: FLEXIBLER KI-CHAT-MODUS (Die 3 originalen Gast-Dropdowns wiederhergestellt)
 # ==============================================================================
 else:
     STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
     bez_spalte, kat_spalte = df_wissen.columns[0], (df_wissen.columns[1] if "Wo?" not in df_wissen.columns else "Wo?")
     
-    gesamte_liste = []
+    st.write("")
+    gewaehltes_temporaeres_objekt = None
+    
+    # Render der drei originalen Dropdowns untereinander
     for kat in STANDARD_DROPDOWNS:
         if "innen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
         elif "außen" in kat.lower() or "aussen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("außen|aussen", case=False, na=False)
@@ -390,54 +399,64 @@ else:
         
         if st.session_state.aktive_rolle == "Gast" and "Relevanz Gast" in df_wissen.columns:
             mask = mask & (df_wissen["Relevanz Gast"].astype(str).str.strip().str.lower() == "x")
-        gesamte_liste.extend(df_wissen[mask][bez_spalte].dropna().drop_duplicates().astype(str).str.strip().tolist())
         
-    gesamte_liste = sorted(list(set(gesamte_liste)))
-    if "Nicht gefunden" in gesamte_liste: gesamte_liste.remove("Nicht gefunden")
-    gesamte_liste.append("Nicht gefunden")
-    
-    ausgewaehltes_objekt = st.selectbox("🔎 Bitte wähle das betroffene Objekt aus:", options=gesamte_liste, index=None, placeholder="Tippen zum Suchen...")
-    if ausgewaehltes_objekt:
-        st.session_state.selected_object = ausgewaehltes_objekt
+        verfuegbare_bez = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
+        verfuegbare_bez = sorted([str(b).strip() for b in verfuegbare_bez])
+        if "Nicht gefunden" in verfuegbare_bez: verfuegbare_bez.remove("Nicht gefunden")
+        verfuegbare_bez.append("Nicht gefunden")
         
-        # Debug Monitor (nur sichtbar wenn aktiv)
-        if st.session_state.debug_modus_aktiv:
-            with st.expander("🔍 DIAGNOSE MONITOR", expanded=False):
-                st.write(f"**Objekt:** {st.session_state.selected_object} | **Use Case:** {st.session_state.aktiver_use_case}")
-                st.write(f"**Letzter Schreibstatus:** {st.session_state.last_write_status}")
-                st.text_area("Extrahierter Matrix-Kontext:", value=st.session_state.last_extracted_context, height=100, disabled=True)
+        dp_key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
+        aktueller_idx = verfuegbare_bez.index(st.session_state.selected_object) if st.session_state.selected_object in verfuegbare_bez else None
+        
+        val = st.selectbox(label=f"hidden_{kat}", options=verfuegbare_bez, index=aktueller_idx, placeholder=f"🔎 {kat} wählen...", key=dp_key, label_visibility="collapsed")
+        if val and val != st.session_state.selected_object:
+            gewaehltes_temporaeres_objekt = val
 
-        st.write("---")
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]): st.markdown(msg["content"])
-            
-        if user_input := st.chat_input(chat_abfrage_text):
-            st.session_state.messages.append({"role": "user", "content": user_input})
-            st.rerun()
-            
-        if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-            aktueller_nutzer_text = st.session_state.messages[-1]["content"]
-            
-            if aktuelle_richtung == "OUTPUT":
-                if st.session_state.selected_object == "Nicht gefunden":
-                    execute_transitional_routing(aktueller_nutzer_text, "Nicht gefunden")
+    if gewaehltes_temporaeres_objekt:
+        st.session_state.selected_object = gewaehltes_temporaeres_objekt
+        st.rerun()
+
+    if not st.session_state.selected_object:
+        st.stop()
+        
+    # Debug Monitor
+    if st.session_state.debug_modus_aktiv:
+        with st.expander("🔍 DIAGNOSE MONITOR", expanded=False):
+            st.write(f"**Objekt:** {st.session_state.selected_object} | **Use Case:** {st.session_state.aktiver_use_case}")
+            st.write(f"**Letzter Schreibstatus:** {st.session_state.last_write_status}")
+            st.text_area("Extrahierter Matrix-Kontext:", value=st.session_state.last_extracted_context, height=100, disabled=True)
+
+    st.write("---")
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]): st.markdown(msg["content"])
+        
+    if user_input := st.chat_input(chat_abfrage_text):
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        st.rerun()
+        
+    if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+        aktueller_nutzer_text = st.session_state.messages[-1]["content"]
+        
+        if aktuelle_richtung == "OUTPUT":
+            if st.session_state.selected_object == "Nicht gefunden":
+                execute_transitional_routing(aktueller_nutzer_text, "Nicht gefunden")
+                st.rerun()
+            else:
+                with st.spinner("Durchsuche Matrix..."):
+                    context_str = extract_context_for_object(st.session_state.selected_object)
+                    res = call_gemini_api_structured(aktueller_nutzer_text, context_str)
+                    
+                    luecken_phrasen = ["keine information", "weiß ich nicht", "nicht hinterlegt", "leider nein", "nicht bekannt", "fehlen mir details"]
+                    if res.wissensluecke_erkannt or res.antwort_text == "" or any(p in res.antwort_text.lower() for p in luecken_phrasen):
+                        execute_transitional_routing(aktueller_nutzer_text, st.session_state.selected_object)
+                    else:
+                        st.session_state.messages.append({"role": "assistant", "content": res.antwort_text})
                     st.rerun()
-                else:
-                    with st.spinner("Durchsuche Matrix..."):
-                        context_str = extract_context_for_object(st.session_state.selected_object)
-                        res = call_gemini_api_structured(aktueller_nutzer_text, context_str)
-                        
-                        luecken_phrasen = ["keine information", "weiß ich nicht", "nicht hinterlegt", "leider nein", "nicht bekannt", "fehlen mir details"]
-                        if res.wissensluecke_erkannt or res.antwort_text == "" or any(p in res.antwort_text.lower() for p in luecken_phrasen):
-                            execute_transitional_routing(aktueller_nutzer_text, st.session_state.selected_object)
-                        else:
-                            st.session_state.messages.append({"role": "assistant", "content": res.antwort_text})
-                        st.rerun()
-                        
-            elif aktuelle_richtung == "INPUT":
-                with st.spinner("Protokolliere Eintrag in Zentralmatrix..."):
-                    execute_matrix_input(st.session_state.aktiver_use_case, st.session_state.selected_object, aktueller_nutzer_text)
-                    danke_satz = danke_template.replace("{use_case}", st.session_state.aktiver_use_case)
-                    st.session_state.messages.append({"role": "assistant", "content": danke_satz})
-                    st.cache_data.clear()
-                    st.rerun()
+                    
+        elif aktuelle_richtung == "INPUT":
+            with st.spinner("Protokolliere Eintrag in Zentralmatrix..."):
+                execute_matrix_input(st.session_state.aktiver_use_case, st.session_state.selected_object, aktueller_nutzer_text)
+                danke_satz = danke_template.replace("{use_case}", st.session_state.aktiver_use_case)
+                st.session_state.messages.append({"role": "assistant", "content": danke_satz})
+                st.cache_data.clear()
+                st.rerun()
