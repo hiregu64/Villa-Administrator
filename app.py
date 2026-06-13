@@ -238,7 +238,7 @@ if "bericht" in st.session_state.aktiver_use_case.lower():
     st.stop()
 
 # ==============================================================================
-# CLEANED TAB HMI (DIREKTE PLATZHALTER-AUSWAHL OHNE ZWISCHENTEXT)
+# CLEANED TAB HMI (PROZESSIERT PLATZHALTER DIREKT)
 # ==============================================================================
 bez_col, kat_col = df_wissen.columns[0], ("Wo?" if "Wo?" in df_wissen.columns else df_wissen.columns[1])
 
@@ -251,11 +251,11 @@ def get_liste(pattern):
 tab_innen, tab_aussen, tab_naehe = st.tabs(["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"])
 
 with tab_innen:
-    val_innen = st.selectbox("Ausstattung innen:", options=[None] + get_liste("innen"), key="widget_innen", label_visibility="collapsed")
+    val_innen = st.selectbox("Ausstattung innen:", options=[None] + get_liste("innen"), key="widget_innen", label_visibility="collapsed", placeholder="Bitte wähle das Objekt aus.")
 with tab_aussen:
-    val_aussen = st.selectbox("Ausstattung außen:", options=[None] + get_liste("außen|aussen"), key="widget_aussen", label_visibility="collapsed")
+    val_aussen = st.selectbox("Ausstattung außen:", options=[None] + get_liste("außen|aussen"), key="widget_aussen", label_visibility="collapsed", placeholder="Bitte wähle das Objekt aus.")
 with tab_naehe:
-    val_naehe = st.selectbox("In der Nähe:", options=[None] + get_liste("nähe|naehe"), key="widget_naehe", label_visibility="collapsed")
+    val_naehe = st.selectbox("In der Nähe:", options=[None] + get_liste("nähe|naehe"), key="widget_naehe", label_visibility="collapsed", placeholder="Bitte wähle das Objekt aus.")
 
 # Kapselungs-Routing
 detected_selection = val_innen or val_aussen or val_naehe
@@ -268,8 +268,6 @@ if detected_selection and detected_selection != st.session_state.selected_object
 
 if not st.session_state.selected_object: 
     st.stop()
-
-st.markdown(f"<div style='background-color:#e8f5e9; padding:10px; border-radius:5px; color:#2e7d32; font-weight:bold; margin-top:10px; margin-bottom:15px;'>Aktives Objekt: {st.session_state.selected_object}</div>", unsafe_allow_html=True)
 
 # ==============================================================================
 # DIAGNOSE MONITOR
@@ -290,13 +288,26 @@ if st.session_state.debug_modus_aktiv:
         st.text_area(label="Matrix-Rohdaten", value=st.session_state.get("last_extracted_context"), height=120, disabled=True, label_visibility="collapsed")
 
 # ==============================================================================
-# PROGRESSIVES HMI: SCHRITT 2
+# PROGRESSIVES HMI: SCHRITT 2 (EINGABE / AUSGABE ROUTING)
 # ==============================================================================
 if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.aktive_rolle == "Host":
-    options_spalten = [c for c in df_wissen.columns if c.lower() not in ["bezeichnung", "wo?", "id", "kategorie", "relevanz gast"] and "status" not in c.lower()]
-    st.selectbox("📄 Bitte wähle die Art der Information aus (Zielspalte):", options=[None] + options_spalten, key="selected_field")
+    # EVALUIERUNG SPALTEN_LEXIKON: Ignoriere administrative Systemspalten
+    options_spalten = [
+        c for c in df_wissen.columns 
+        if c.lower() not in ["bezeichnung", "wo?", "id", "kategorie", "relevanz gast"] 
+        and not c.lower().endswith("status")
+    ]
     
-    if not st.session_state.selected_field: st.stop()
+    # Render des korrekten 2. Dropdowns mit dem geforderten Spezifikations-Text
+    st.selectbox(
+        "📄 Bitte wähle die Art der Information aus:", 
+        options=[None] + options_spalten, 
+        key="selected_field",
+        placeholder="Bitte wähle die Art der Information aus."
+    )
+    
+    if not st.session_state.selected_field: 
+        st.stop()
     
     txt = st.text_area(f"Gib hier die neue Information für '{st.session_state.selected_object}' ein:")
     if st.button("💾 In Excel-Zentralmatrix speichern", type="primary") and txt.strip():
@@ -318,7 +329,7 @@ else:
         # Abfanglogik für "Nicht gefunden" Einträge aus der XLS Liste
         is_not_found = "nicht gefunden" in st.session_state.selected_object.lower()
         
-        if direction == "OUTPUT":
+        if richtung == "OUTPUT":
             if is_not_found:
                 st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
                 execute_matrix_input("Keine Information", st.session_state.selected_object, u_text)
