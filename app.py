@@ -44,7 +44,7 @@ for key, value in [
     if key not in st.session_state: st.session_state[key] = value
 
 # ==============================================================================
-# 3. DATEN-LADE ENGINE & FREEZE-PROTOKOLL
+# 3. DATEN-LADE ENGINE
 # ==============================================================================
 def fetch_matrix_from_drive():
     try:
@@ -224,9 +224,7 @@ richtung = str(uc_row.iloc[0][df_usecases.columns[1]]).strip().upper() if not uc
 fragetext = str(uc_row.iloc[0][df_usecases.columns[4]]).strip() if not uc_row.empty and len(df_usecases.columns) > 4 and pd.notna(uc_row.iloc[0][df_usecases.columns[4]]) else "Wie kann ich helfen?"
 danke_tmpl = str(uc_row.iloc[0][df_usecases.columns[5]]).strip() if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]) else "Danke!"
 
-# ==============================================================================
-# SPEZIAL-MODE: SYSTEM-BERICHTE
-# ==============================================================================
+# SYSTEM-BERICHTE SCHNELL-STOPP
 if "bericht" in st.session_state.aktiver_use_case.lower():
     typ = st.selectbox("Typ", ["Offene Störungen", "Behobene Störungen", "Offenes Feedback", "Offene Wissenslücken", "Gesamtübersicht"], index=None, placeholder="Berichtsart wählen...")
     if typ and st.button("📊 Bericht generieren", type="primary", use_container_width=True):
@@ -237,115 +235,103 @@ if "bericht" in st.session_state.aktiver_use_case.lower():
         st.markdown(call_gemini(f"Strukturiere das chronologisch:\n\n" + "\n".join(lines), structured=False) if lines else "Keine Einträge.")
     st.stop()
 
-# ==============================================================================
-# TAB-HMI ZUSTANDSSICHERUNG (Zwingt Streamlit, den aktiven Tab im State zu halten)
-# ==============================================================================
+# Helper zum Filtern der Listen nach Kategorien (Wo?)
 bez_col, kat_col = df_wissen.columns[0], ("Wo?" if "Wo?" in df_wissen.columns else df_wissen.columns[1])
-
-def get_liste(pattern):
+def get_liste_by_bereich(bereichs_key):
+    pattern = "innen" if bereichs_key == "innen" else ("außen|aussen" if bereichs_key == "aussen" else "nähe|naehe")
     mask = df_wissen[kat_col].astype(str).str.contains(pattern, case=False, na=False)
     if st.session_state.aktive_rolle == "Gast" and "Relevanz Gast" in df_wissen.columns:
         mask = mask & (df_wissen["Relevanz Gast"].astype(str).str.strip().str.lower() == "x")
     return sorted(df_wissen[mask][bez_col].dropna().drop_duplicates().astype(str).str.strip().tolist())
 
-# Tabs mit Zustandskopplung initialisieren
-tab_labels = ["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"]
-if "aktiver_tab_index" not in st.session_state:
-    st.session_state.aktiver_tab_index = 0
-
-# Rendert die Tabs und merkt sich, welcher offen war
-tabs = st.tabs(tab_labels)
-
-with tabs[0]:
-    val_innen = st.selectbox("Ausstattung innen:", options=["Bitte wähle das Objekt aus."] + get_liste("innen"), key="widget_innen", label_visibility="collapsed")
-    if val_innen != "Bitte wähle das Objekt aus.":
-        st.session_state.aktiver_tab_index = 0
-
-with tabs[1]:
-    val_aussen = st.selectbox("Ausstattung außen:", options=["Bitte wähle das Objekt aus."] + get_liste("außen|aussen"), key="widget_aussen", label_visibility="collapsed")
-    if val_aussen != "Bitte wähle das Objekt aus.":
-        st.session_state.aktiver_tab_index = 1
-
-with tabs[2]:
-    val_naehe = st.selectbox("In der Nähe:", options=["Bitte wähle das Objekt aus."] + get_liste("nähe|naehe"), key="widget_naehe", label_visibility="collapsed")
-    if val_naehe != "Bitte wähle das Objekt aus.":
-        st.session_state.aktiver_tab_index = 2
-
-# Ermittlung des aktuell selektierten Objekts aus dem aktiven Tab
-aktuell_gewaehlt = None
-if st.session_state.aktiver_tab_index == 0 and val_innen != "Bitte wähle das Objekt aus.": 
-    aktuell_gewaehlt = val_innen
-elif st.session_state.aktiver_tab_index == 1 and val_aussen != "Bitte wähle das Objekt aus.": 
-    aktuell_gewaehlt = val_aussen
-elif st.session_state.aktiver_tab_index == 2 and val_naehe != "Bitte wähle das Objekt aus.": 
-    aktuell_gewaehlt = val_naehe
-
-# State aktualisieren und kontrollierten Rerun ausführen
-if aktuell_gewaehlt and aktuell_gewaehlt != st.session_state.selected_object:
-    st.session_state.selected_object = aktuell_gewaehlt
-    st.session_state.selected_field = None
-    st.session_state.messages = []
-    st.rerun()
-
-# Wenn kein Objekt fixiert ist, stoppt die App sauber hier
-if not st.session_state.selected_object: 
-    st.stop()
-
 # ==============================================================================
-# DIAGNOSE MONITOR
-# ==============================================================================
-if st.session_state.debug_modus_aktiv:
-    with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR (Laufzeit-Metriken)", expanded=True):
-        d_col1, d_col2 = st.columns(2)
-        with d_col1:
-            st.metric(label="1. Aktive Rolle", value=str(st.session_state.get("aktive_rolle")))
-            st.metric(label="3. Gewähltes Objekt", value=str(st.session_state.selected_object))
-        with d_col2:
-            st.metric(label="2. Use Case \| Richtung", value=f"{st.session_state.get('aktiver_use_case')} \| {richtung}")
-        
-        st.write("**4. Letzter Matrix-Schreibstatus:**")
-        st.info(st.session_state.get("last_write_status"))
-        
-        st.write("**5. Letzter Kontext-Extrakt (KI-Input):**")
-        st.text_area(label="Matrix-Rohdaten", value=st.session_state.get("last_extracted_context"), height=120, disabled=True, label_visibility="collapsed")
-
-# ==============================================================================
-# PROGRESSIVES HMI: SCHRITT 2 (ZWEI DROP-DOWNS PARALLEL AKTIVIERBAR)
+# RADIKALER NEUER WEG: KASKADIERTE SELEKTION FÜR DEN HOST BEI "NEUE INFORMATION"
 # ==============================================================================
 if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.aktive_rolle == "Host":
-    # 1. Inhaltsspalten aus Spalten-Lexikon / Wissensbasis extrahieren
+    
+    # 1. Stufe: Bereich wählen (Verhindert Tab-Rerun-Fehler)
+    bereich = st.selectbox(
+        "Wähle den Bereich aus:",
+        options=["Bitte wähle einen Bereich aus.", "🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"],
+        key="host_bereichs_selektor"
+    )
+    
+    if bereich == "Bitte wähle einen Bereich aus.":
+        st.stop()
+        
+    # Bereichs-Key übersetzen
+    b_key = "innen" if "innen" in bereich.lower() else ("aussen" if "außen" in bereich.lower() else "naehe")
+    objekt_liste = get_liste_by_bereich(b_key)
+    
+    # 2. Stufe: Objekt aus dem gewählten Bereich wählen
+    objekt_auswahl = st.selectbox(
+        "Bitte wähle das Objekt aus:",
+        options=["Bitte wähle das Objekt aus."] + objekt_liste,
+        key="host_objekt_selektor"
+    )
+    
+    if objekt_auswahl == "Bitte wähle das Objekt aus.":
+        st.stop()
+        
+    st.session_state.selected_object = objekt_auswahl
+    
+    # 3. Stufe: Spalte aus dem Spalten_Lexikon bestimmen
     options_spalten = [
         c for c in df_wissen.columns 
         if c.lower() not in ["bezeichnung", "wo?", "id", "kategorie", "relevanz gast"] 
         and not c.lower().endswith("status")
     ]
     
-    # 2. Das zweite Drop-down wird ohne blockierendes st.stop() direkt gerendert
     auswahl_feld = st.selectbox(
-        "Art der Information:", 
+        "Bitte wähle die Art der Information aus:", 
         options=["Bitte wähle die Art der Information aus."] + options_spalten, 
-        key="selected_field_widget",
-        label_visibility="collapsed"
+        key="host_spalten_selektor"
     )
     
-    if auswahl_feld != "Bitte wähle die Art der Information aus.":
-        st.session_state.selected_field = auswahl_feld
-    else:
-        st.session_state.selected_field = None
+    if auswahl_feld == "Bitte wähle die Art der Information aus.":
+        st.stop()
+        
+    st.session_state.selected_field = auswahl_feld
     
-    # 3. Der Textbereich öffnet sich erst, wenn beide Auswahlen gültig getroffen wurden
-    if st.session_state.selected_field:
-        txt = st.text_area(f"Gib hier die neue Information für '{st.session_state.selected_object}' in Spalte '{st.session_state.selected_field}' ein:")
-        if st.button("💾 In Excel-Zentralmatrix speichern", type="primary") and txt.strip():
-            execute_matrix_input_direct(st.session_state.selected_field, st.session_state.selected_object, txt.strip())
-            st.success("Erfolgreich in Matrix dokumentiert!")
-            # Nach Speichern Zustand zurücksetzen
-            st.session_state.selected_object = None
-            st.session_state.selected_field = None
-            st.rerun()
+    # 4. Stufe: Werteingabe und Save-Prozess
+    txt = st.text_area(f"Gib hier die neue Information für '{st.session_state.selected_object}' in '{st.session_state.selected_field}' ein:")
+    if st.button("💾 In Excel-Zentralmatrix speichern", type="primary") and txt.strip():
+        execute_matrix_input_direct(st.session_state.selected_field, st.session_state.selected_object, txt.strip())
+        st.success("Erfolgreich in Matrix dokumentiert!")
+        # Kompletten Zustand aufräumen
+        st.session_state.selected_object = None
+        st.session_state.selected_field = None
+        st.rerun()
+        
     st.stop()
 
+# ==============================================================================
+# STANDARD-TAB-ANSICHT (NUR NOCH FÜR GÄSTE & REGULÄRE INPUTS/OUTPUTS)
+# ==============================================================================
 else:
+    tab_innen, tab_aussen, tab_naehe = st.tabs(["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"])
+
+    with tab_innen:
+        val_innen = st.selectbox("Ausstattung innen:", options=["Bitte wähle das Objekt aus."] + get_liste_by_bereich("innen"), key="g_innen", label_visibility="collapsed")
+    with tab_aussen:
+        val_aussen = st.selectbox("Ausstattung außen:", options=["Bitte wähle das Objekt aus."] + get_liste_by_bereich("aussen"), key="g_aussen", label_visibility="collapsed")
+    with tab_naehe:
+        val_naehe = st.selectbox("In der Nähe:", options=["Bitte wähle das Objekt aus."] + get_liste_by_bereich("naehe"), key="g_naehe", label_visibility="collapsed")
+
+    aktuell_gewaehlt = None
+    if val_innen != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_innen
+    elif val_aussen != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_aussen
+    elif val_naehe != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_naehe
+
+    if aktuell_gewaehlt and aktuell_gewaehlt != st.session_state.selected_object:
+        st.session_state.selected_object = aktuell_gewaehlt
+        st.session_state.messages = []
+        st.rerun()
+
+    if not st.session_state.selected_object: 
+        st.stop()
+
+    # Chat / Input Interface für reguläre Use Cases
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]): st.markdown(msg["content"])
         
