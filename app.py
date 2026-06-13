@@ -44,7 +44,7 @@ for key, value in [
     if key not in st.session_state: st.session_state[key] = value
 
 # ==============================================================================
-# 3. DATEN-LADE ENGINE & FREEZE-PROTOKOLL (Vorschlag 3)
+# 3. DATEN-LADE ENGINE & FREEZE-PROTOKOLL
 # ==============================================================================
 def fetch_matrix_from_drive():
     try:
@@ -77,7 +77,6 @@ def fetch_matrix_from_drive():
         st.error(f"Synchronisations-Fehler: {e}")
         return False
 
-# Einmaliger Freeze beim ersten Laden
 if st.session_state.matrix_data is None:
     with st.spinner("Initialisiere geschützte Matrix-Daten..."):
         fetch_matrix_from_drive()
@@ -179,12 +178,10 @@ def execute_matrix_input(use_case, objekt, text):
 # ==============================================================================
 st.title("☀️ Villa Avatar")
 
-# Manuelle Synchronisation nur bei Bedarf (Host)
 if st.session_state.aktive_rolle == "Host" and st.sidebar.button("🔄 Matrix neu laden"):
     st.cache_data.clear()
     if fetch_matrix_from_drive(): st.sidebar.success("Matrix frisch geladen!")
 
-# Rollenauswahl
 role = st.selectbox("Rolle", options=["Gast", "Host"], index=None, placeholder="Wer bist du?", label_visibility="collapsed")
 if role and role != st.session_state.aktive_rolle:
     st.session_state.aktive_rolle = role
@@ -193,7 +190,6 @@ if role and role != st.session_state.aktive_rolle:
 
 if not st.session_state.aktive_rolle: st.stop()
 
-# Passwort-Gate
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     pwd = st.text_input("🔑 Passwort eingeben:", type="password")
     if pwd and df_passwoerter is not None:
@@ -207,7 +203,6 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
                 st.rerun()
     st.stop()
 
-# Use Cases Buttons
 if df_usecases is not None:
     uc_col, hmi_col = df_usecases.columns[0], df_usecases.columns[2]
     allowed = [uc for uc in df_usecases[df_usecases[hmi_col].astype(str).str.lower().str.strip() == "ja"][uc_col].tolist() if st.session_state.aktive_rolle == "Host" or any(x in uc.lower() for x in ["hilfe", "störung", "feedback"])]
@@ -224,7 +219,6 @@ if df_usecases is not None:
 
 if not st.session_state.aktiver_use_case: st.stop()
 
-# Use Case Metadaten extrahieren
 uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == st.session_state.aktiver_use_case.lower().strip()]
 richtung = str(uc_row.iloc[0][df_usecases.columns[1]]).strip().upper() if not uc_row.empty else "OUTPUT"
 fragetext = str(uc_row.iloc[0][df_usecases.columns[4]]).strip() if not uc_row.empty and len(df_usecases.columns) > 4 and pd.notna(uc_row.iloc[0][df_usecases.columns[4]]) else "Wie kann ich helfen?"
@@ -244,7 +238,7 @@ if "bericht" in st.session_state.aktiver_use_case.lower():
     st.stop()
 
 # ==============================================================================
-# KANONISCHES HMI (Vorschlag 2): TABS ALS REINE WIDGET-CONTAINER
+# CLEANED TAB HMI (DIREKTE PLATZHALTER-AUSWAHL OHNE ZWISCHENTEXT)
 # ==============================================================================
 bez_col, kat_col = df_wissen.columns[0], ("Wo?" if "Wo?" in df_wissen.columns else df_wissen.columns[1])
 
@@ -254,21 +248,17 @@ def get_liste(pattern):
         mask = mask & (df_wissen["Relevanz Gast"].astype(str).str.strip().str.lower() == "x")
     return sorted(df_wissen[mask][bez_col].dropna().drop_duplicates().astype(str).str.strip().tolist())
 
-# Die Kapselung der State-Engine (Vorschlag 1)
 tab_innen, tab_aussen, tab_naehe = st.tabs(["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"])
 
 with tab_innen:
-    val_innen = st.selectbox("Wähle ein Objekt (Innenraum):", options=[None] + get_liste("innen"), key="widget_innen")
+    val_innen = st.selectbox("Ausstattung innen:", options=[None] + get_liste("innen"), key="widget_innen", label_visibility="collapsed")
 with tab_aussen:
-    val_aussen = st.selectbox("Wähle ein Objekt (Außenbereich):", options=[None] + get_liste("außen|aussen"), key="widget_aussen")
+    val_aussen = st.selectbox("Ausstattung außen:", options=[None] + get_liste("außen|aussen"), key="widget_aussen", label_visibility="collapsed")
 with tab_naehe:
-    val_naehe = st.selectbox("Wähle ein Objekt (Umgebung):", options=[None] + get_liste("nähe|naehe"), key="widget_naehe")
+    val_naehe = st.selectbox("In der Nähe:", options=[None] + get_liste("nähe|naehe"), key="widget_naehe", label_visibility="collapsed")
 
-# Isoliertes State-Routing vor dem Render-Stopp
+# Kapselungs-Routing
 detected_selection = val_innen or val_aussen or val_naehe
-
-if st.checkbox("Ich kann das gewünschte Objekt nicht finden.", key="widget_notfound"):
-    detected_selection = "Nicht gefunden"
 
 if detected_selection and detected_selection != st.session_state.selected_object:
     st.session_state.selected_object = detected_selection
@@ -276,14 +266,13 @@ if detected_selection and detected_selection != st.session_state.selected_object
     st.session_state.messages = []
     st.rerun()
 
-# Wenn die Kaskade auf Null steht, stoppt die App sauber hier
 if not st.session_state.selected_object: 
     st.stop()
 
 st.markdown(f"<div style='background-color:#e8f5e9; padding:10px; border-radius:5px; color:#2e7d32; font-weight:bold; margin-top:10px; margin-bottom:15px;'>Aktives Objekt: {st.session_state.selected_object}</div>", unsafe_allow_html=True)
 
 # ==============================================================================
-# DIAGNOSE MONITOR (EXAKT NACH SPEC)
+# DIAGNOSE MONITOR
 # ==============================================================================
 if st.session_state.debug_modus_aktiv:
     with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR (Laufzeit-Metriken)", expanded=True):
@@ -301,7 +290,7 @@ if st.session_state.debug_modus_aktiv:
         st.text_area(label="Matrix-Rohdaten", value=st.session_state.get("last_extracted_context"), height=120, disabled=True, label_visibility="collapsed")
 
 # ==============================================================================
-# PROGRESSIVES HMI: SCHRITT 2 – DETAIL-INTERAKTION
+# PROGRESSIVES HMI: SCHRITT 2
 # ==============================================================================
 if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.aktive_rolle == "Host":
     options_spalten = [c for c in df_wissen.columns if c.lower() not in ["bezeichnung", "wo?", "id", "kategorie", "relevanz gast"] and "status" not in c.lower()]
@@ -326,10 +315,13 @@ else:
     if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
         u_text = st.session_state.messages[-1]["content"]
         
-        if richtung == "OUTPUT":
-            if st.session_state.selected_object == "Nicht gefunden":
+        # Abfanglogik für "Nicht gefunden" Einträge aus der XLS Liste
+        is_not_found = "nicht gefunden" in st.session_state.selected_object.lower()
+        
+        if direction == "OUTPUT":
+            if is_not_found:
                 st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
-                execute_matrix_input("Keine Information", "Nicht gefunden", u_text)
+                execute_matrix_input("Keine Information", st.session_state.selected_object, u_text)
             else:
                 with st.spinner("Prüfe Daten..."):
                     res = call_gemini(u_text, extract_context_for_object(st.session_state.selected_object))
