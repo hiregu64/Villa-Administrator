@@ -40,9 +40,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ==============================================================================
-# CENTRAL STATE MACHINE
-# ==============================================================================
+# Session State Initialisierung
 if "aktive_rolle" not in st.session_state: st.session_state.aktive_rolle = None
 if "aktiver_use_case" not in st.session_state: st.session_state.aktiver_use_case = None
 if "selected_object" not in st.session_state: st.session_state.selected_object = None
@@ -279,6 +277,15 @@ def generate_raw_report_context(filter_type):
                     report_lines.append(f"Objekt: {row[bez_col]} | Kat: {col}\nEintrag: {cell_val}\n---")
     return "\n".join(report_lines) if report_lines else "Keine passenden Einträge gefunden."
 
+def handle_dropdown_selection():
+    # Callback-Steuerung für reaktionsschnelle, zustandsbasierte Objektauswahl
+    for kat in ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]:
+        key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
+        if key in st.session_state and st.session_state[key] is not None:
+            st.session_state.selected_object = st.session_state[key]
+            st.session_state.messages = []
+            break
+
 # ==============================================================================
 # 6. HMI PRESENTATION LAYER
 # ==============================================================================
@@ -311,7 +318,7 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
         st.error("❌ Falsches Passwort.")
     st.stop()
 
-# Use Case Selektion mit ausführlichen Spaltentexten (Button_HMI)
+# Use Case Selektion
 st.write("---")
 if df_usecases is not None:
     uc_col, dir_col, hmi_col = df_usecases.columns[0], df_usecases.columns[1], df_usecases.columns[2]
@@ -376,7 +383,6 @@ elif st.session_state.aktiver_use_case == "Neue Information" and st.session_stat
             info_text = st.text_area(f"Gib hier den neuen Informationstext für '{obj_wahl}' ➔ '{feld_wahl}' ein:", height=120)
             if st.form_submit_button("💾 Eintrag in Excel-Zentralmatrix speichern", type="primary") and info_text.strip():
                 with st.spinner("Schreibe in Zentralmatrix..."):
-                    # KORREKTUR: Hier wurde die korrekte, oben definierte Funktion verknüpft
                     execute_matrix_input_direct(feld_wahl, obj_wahl, info_text.strip())
                     st.success(f"Erfolgreich eingetragen! Das Thema '{feld_wahl}' wurde für das Objekt '{obj_wahl}' aktualisiert.")
     st.stop()
@@ -390,8 +396,7 @@ else:
     
     st.write("")
     
-    # KORREKTUR: Um ein unkontrolliertes Überschreiben im Schleifendurchlauf zu verhindern,
-    # wird nun pro Kategorie ein isoliertes Select-Feld gerendert.
+    # Rendern der voneinander isolierten Kaskaden-Dropdowns via `on_change` Callback Control
     for kat in STANDARD_DROPDOWNS:
         if "innen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
         elif "außen" in kat.lower() or "aussen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("außen|aussen", case=False, na=False)
@@ -407,28 +412,31 @@ else:
         
         dp_key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
         
-        # Bestimme den aktuellen Index, falls dieses Feld aktiv gewählt wurde
         aktueller_idx = None
         if st.session_state.selected_object in verfuegbare_bez:
             aktueller_idx = verfuegbare_bez.index(st.session_state.selected_object)
             
-        val = st.selectbox(label=f"hidden_{kat}", options=verfuegbare_bez, index=aktueller_idx, placeholder=f"🔎 {kat} wählen...", key=dp_key, label_visibility="collapsed")
-        
-        # Sobald eine valide Auswahl getroffen wird, die vom aktuellen Zustand abweicht, fixieren
-        if val and val != st.session_state.selected_object and st.active_event is not None:
-            st.session_state.selected_object = val
-            st.session_state.messages = []
-            st.rerun()
+        st.selectbox(label=f"hidden_{kat}", options=verfuegbare_bez, index=aktueller_idx, placeholder=f"🔎 {kat} wählen...", key=dp_key, on_change=handle_dropdown_selection, label_visibility="collapsed")
 
     if not st.session_state.selected_object:
         st.stop()
         
-    # Debug Monitor
+    # VOLLLSTÄNDIGER DIAGNOSE MONITOR (Reaktiviert)
     if st.session_state.debug_modus_aktiv:
-        with st.expander("🔍 DIAGNOSE MONITOR", expanded=False):
-            st.write(f"**Objekt:** {st.session_state.selected_object} | **Use Case:** {st.session_state.aktiver_use_case}")
-            st.write(f"**Letzter Schreibstatus:** {st.session_state.last_write_status}")
-            st.text_area("Extrahierter Matrix-Kontext:", value=st.session_state.last_extracted_context, height=100, disabled=True)
+        st.write("")
+        with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR (Laufzeit-Metriken)", expanded=True):
+            d_col1, d_col2 = st.columns(2)
+            with d_col1:
+                st.metric(label="1. Aktive Rolle", value=str(st.session_state.get("aktive_rolle", "None")))
+                st.metric(label="3. Gewähltes Objekt", value=str(st.session_state.selected_object))
+            with d_col2:
+                st.metric(label="2. Use Case | Richtung", value=f"{st.session_state.get('aktiver_use_case')} | {aktuelle_richtung}")
+            
+            st.write("**4. Letzter Matrix-Schreibstatus:**")
+            st.info(st.session_state.get("last_write_status", "Kein Status"))
+            
+            st.write("**5. Letzter Kontext-Extrakt (KI-Input):**")
+            st.text_area(label="Matrix-Rohdaten", value=st.session_state.get("last_extracted_context", ""), height=120, disabled=True, label_visibility="collapsed")
 
     st.write("---")
     for msg in st.session_state.messages:
@@ -444,4 +452,23 @@ else:
         if aktuelle_richtung == "OUTPUT":
             if st.session_state.selected_object == "Nicht gefunden":
                 execute_transitional_routing(aktueller_nutzer_text, "Nicht gefunden")
+                st.rerun()
+            else:
+                with st.spinner("Durchsuche Matrix..."):
+                    context_str = extract_context_for_object(st.session_state.selected_object)
+                    res = call_gemini_api_structured(aktueller_nutzer_text, context_str)
+                    
+                    luecken_phrasen = ["keine information", "weiß ich nicht", "nicht hinterlegt", "leider nein", "nicht bekannt", "fehlen mir details"]
+                    if res.wissensluecke_erkannt or res.antwort_text == "" or any(p in res.antwort_text.lower() for p in luecken_phrasen):
+                        execute_transitional_routing(aktueller_nutzer_text, st.session_state.selected_object)
+                    else:
+                        st.session_state.messages.append({"role": "assistant", "content": res.antwort_text})
+                    st.rerun()
+                    
+        elif aktuelle_richtung == "INPUT":
+            with st.spinner("Protokolliere Eintrag in Zentralmatrix..."):
+                execute_matrix_input(st.session_state.aktiver_use_case, st.session_state.selected_object, aktueller_nutzer_text)
+                danke_satz = danke_template.replace("{use_case}", st.session_state.aktiver_use_case)
+                st.session_state.messages.append({"role": "assistant", "content": danke_satz})
+                st.cache_data.clear()
                 st.rerun()
