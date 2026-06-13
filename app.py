@@ -277,15 +277,6 @@ def generate_raw_report_context(filter_type):
                     report_lines.append(f"Objekt: {row[bez_col]} | Kat: {col}\nEintrag: {cell_val}\n---")
     return "\n".join(report_lines) if report_lines else "Keine passenden Einträge gefunden."
 
-def handle_dropdown_selection():
-    # Callback-Steuerung für reaktionsschnelle, zustandsbasierte Objektauswahl
-    for kat in ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]:
-        key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
-        if key in st.session_state and st.session_state[key] is not None:
-            st.session_state.selected_object = st.session_state[key]
-            st.session_state.messages = []
-            break
-
 # ==============================================================================
 # 6. HMI PRESENTATION LAYER
 # ==============================================================================
@@ -396,7 +387,7 @@ else:
     
     st.write("")
     
-    # Rendern der voneinander isolierten Kaskaden-Dropdowns via `on_change` Callback Control
+    # Rendern der voneinander isolierten Kaskaden-Dropdowns mit eindeutigen Labels
     for kat in STANDARD_DROPDOWNS:
         if "innen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
         elif "außen" in kat.lower() or "aussen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("außen|aussen", case=False, na=False)
@@ -416,12 +407,17 @@ else:
         if st.session_state.selected_object in verfuegbare_bez:
             aktueller_idx = verfuegbare_bez.index(st.session_state.selected_object)
             
-        st.selectbox(label=f"hidden_{kat}", options=verfuegbare_bez, index=aktueller_idx, placeholder=f"🔎 {kat} wählen...", key=dp_key, on_change=handle_dropdown_selection, label_visibility="collapsed")
+        # FIX: Eindeutige Label-Strings pro Dropdown verhindern das Verschwinden des Widgets
+        auswahl = st.selectbox(label=f"Auswahl {kat}", options=verfuegbare_bez, index=aktueller_idx, placeholder=f"🔎 {kat} wählen...", key=dp_key, label_visibility="collapsed")
+        if auswahl and auswahl != st.session_state.selected_object:
+            st.session_state.selected_object = auswahl
+            st.session_state.messages = []
+            st.rerun()
 
     if not st.session_state.selected_object:
         st.stop()
         
-    # VOLLLSTÄNDIGER DIAGNOSE MONITOR (Reaktiviert)
+    # DIAGNOSE MONITOR
     if st.session_state.debug_modus_aktiv:
         st.write("")
         with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR (Laufzeit-Metriken)", expanded=True):
