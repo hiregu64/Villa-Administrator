@@ -38,15 +38,15 @@ st.markdown("""
 for key, value in [
     ("aktive_rolle", None), ("aktiver_use_case", None), ("selected_object", None), 
     ("selected_field", None), ("messages", []), ("host_authentifiziert", False), 
-    ("debug_modus_aktiv", False), ("last_write_status", "Kein Schreibvorgang."), ("last_extracted_context", "")
+    ("debug_modus_aktiv", False), ("last_write_status", "Noch kein Schreibvorgang."), 
+    ("last_extracted_context", "Kein Kontext extrahiert."), ("matrix_data", None)
 ]:
     if key not in st.session_state: st.session_state[key] = value
 
 # ==============================================================================
-# 3. DATEN-LADE ENGINE & UTILS
+# 3. DATEN-LADE ENGINE & FREEZE-PROTOKOLL (Vorschlag 3)
 # ==============================================================================
-@st.cache_data(ttl=30)
-def load_dynamic_data():
+def fetch_matrix_from_drive():
     try:
         creds = service_account.Credentials.from_service_account_info(st.secrets["GOOGLE_CREDENTIALS"])
         service = build('drive', 'v3', credentials=creds)
@@ -61,17 +61,32 @@ def load_dynamic_data():
         fh.seek(0)
         try: df_passwoerter = pd.read_excel(fh, sheet_name="Passwort_Lexikon", header=0)
         except: df_passwoerter = None
-        if df_wissen is not None and "Wo?" in df_wissen.columns: df_wissen["Wo?"] = df_wissen["Wo?"].ffill()
-        return df_wissen, df_lexikon, df_usecases, df_passwoerter, service
+        
+        if df_wissen is not None and "Wo?" in df_wissen.columns: 
+            df_wissen["Wo?"] = df_wissen["Wo?"].ffill()
+            
+        for df in [df_usecases, df_passwoerter, df_wissen, df_lexikon]:
+            if df is not None: df.columns = [str(c).strip() for c in df.columns]
+            
+        st.session_state.matrix_data = {
+            "wissen": df_wissen, "lexikon": df_lexikon, 
+            "usecases": df_usecases, "passwoerter": df_passwoerter, "service": service
+        }
+        return True
     except Exception as e:
-        st.error(f"Fehler bei Synchronisation: {e}")
-        return None, None, None, None, None
+        st.error(f"Synchronisations-Fehler: {e}")
+        return False
 
-with st.spinner("Synchronisiere Matrix..."):
-    df_wissen, df_lexikon, df_usecases, df_passwoerter, drive_service = load_dynamic_data()
+# Einmaliger Freeze beim ersten Laden
+if st.session_state.matrix_data is None:
+    with st.spinner("Initialisiere geschützte Matrix-Daten..."):
+        fetch_matrix_from_drive()
 
-for df in [df_usecases, df_passwoerter, df_wissen, df_lexikon]:
-    if df is not None: df.columns = [str(c).strip() for c in df.columns]
+df_wissen = st.session_state.matrix_data["wissen"] if st.session_state.matrix_data else None
+df_lexikon = st.session_state.matrix_data["lexikon"] if st.session_state.matrix_data else None
+df_usecases = st.session_state.matrix_data["usecases"] if st.session_state.matrix_data else None
+df_passwoerter = st.session_state.matrix_data["passwoerter"] if st.session_state.matrix_data else None
+drive_service = st.session_state.matrix_data["service"] if st.session_state.matrix_data else None
 
 def find_column_by_fuzzy_name(headers, target_name):
     cleaned = [str(h).strip().lower() for h in headers]
@@ -101,17 +116,18 @@ def extract_context_for_object(objekt_name):
     row = df_wissen[df_wissen[bez_col].astype(str).str.strip().str.lower() == objekt_name.lower().strip()]
     if row.empty: return ""
     
-    context_parts = [f"Objekt: {objekt_name}"]
+    context_parts = [f"Informationen zum Objekt: {objekt_name}"]
     if str(st.session_state.aktive_rolle).lower() == "host":
         for col in df_wissen.columns:
             if col != bez_col and "status" not in col.lower() and col.lower() != "wo?":
-                if pd.notna(row.iloc[0][col]): context_parts.append(f"- {col}: {row.iloc[0][col]}")
+                if pd.notna(row.iloc[0][col]) and str(row.iloc[0][col]).strip() != "": 
+                    context_parts.append(f"- {col}: {str(row.iloc[0][col]).strip()}")
     else:
         gast_col = next((c for c in df_lexikon.columns if "gast" in c.lower()), df_lexikon.columns[-1])
         tags = df_lexikon[df_lexikon[gast_col].astype(str).str.lower().str.strip() == "ja"][df_lexikon.columns[0]].tolist()
         for col in df_wissen.columns:
-            if any(col.lower() == t.lower() for t in tags) and col in row.columns and pd.notna(row.iloc[0][col]):
-                context_parts.append(f"- {col}: {row.iloc[0][col]}")
+            if any(col.lower() == t.lower() for t in tags) and col in row.columns and pd.notna(row.iloc[0][col]) and str(row.iloc[0][col]).strip() != "":
+                context_parts.append(f"- {col}: {str(row.iloc[0][col]).strip()}")
                 
     st.session_state.last_extracted_context = "\n".join(context_parts)
     return st.session_state.last_extracted_context
@@ -148,7 +164,7 @@ def execute_matrix_input_direct(physische_spalte, objekt, text):
             wb.save(out)
             out.seek(0)
             drive_service.files().update(fileId=FILE_ID, media_body=MediaIoBaseUpload(out, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')).execute()
-            st.session_state.last_write_status = f"✅ Gespeichert in Zeile {row_idx}, Spalte {physische_spalte}"
+            st.session_state.last_write_status = f"✅ ERFOLG: Zeile {row_idx}, Spalte '{physische_spalte}' beschrieben."
             st.toast("✅ Matrix aktualisiert!")
     except Exception as e: st.error(f"Schreibfehler: {e}")
 
@@ -163,6 +179,11 @@ def execute_matrix_input(use_case, objekt, text):
 # ==============================================================================
 st.title("☀️ Villa Avatar")
 
+# Manuelle Synchronisation nur bei Bedarf (Host)
+if st.session_state.aktive_rolle == "Host" and st.sidebar.button("🔄 Matrix neu laden"):
+    st.cache_data.clear()
+    if fetch_matrix_from_drive(): st.sidebar.success("Matrix frisch geladen!")
+
 # Rollenauswahl
 role = st.selectbox("Rolle", options=["Gast", "Host"], index=None, placeholder="Wer bist du?", label_visibility="collapsed")
 if role and role != st.session_state.aktive_rolle:
@@ -176,10 +197,14 @@ if not st.session_state.aktive_rolle: st.stop()
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     pwd = st.text_input("🔑 Passwort eingeben:", type="password")
     if pwd and df_passwoerter is not None:
-        if any(pwd.strip() == str(r[df_passwoerter.columns[1]]).strip() for _, r in df_passwoerter.iterrows()):
-            st.session_state.host_authentifiziert = True
-            st.session_state.debug_modus_aktiv = any(str(r[df_passwoerter.columns[2]]).strip().lower() == "debug" for _, r in df_passwoerter.iterrows() if pwd.strip() == str(r[df_passwoerter.columns[1]]).strip())
-            st.rerun()
+        p_rolle_col, p_pwd_col = df_passwoerter.columns[0], df_passwoerter.columns[1]
+        host_rows = df_passwoerter[df_passwoerter[p_rolle_col].astype(str).str.strip().str.lower() == str(df_passwoerter.iloc[0][p_rolle_col]).strip().lower()]
+        for _, r in host_rows.iterrows():
+            if pwd.strip() == str(r[p_pwd_col]).strip():
+                st.session_state.host_authentifiziert = True
+                if len(df_passwoerter.columns) > 2 and str(r[df_passwoerter.columns[2]]).strip().lower() == "debug":
+                    st.session_state.debug_modus_aktiv = True
+                st.rerun()
     st.stop()
 
 # Use Cases Buttons
@@ -206,7 +231,7 @@ fragetext = str(uc_row.iloc[0][df_usecases.columns[4]]).strip() if not uc_row.em
 danke_tmpl = str(uc_row.iloc[0][df_usecases.columns[5]]).strip() if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]) else "Danke!"
 
 # ==============================================================================
-# SPEZIAL-MODE: SYSTEM-BERICHTE (Keine Objektauswahl nötig)
+# SPEZIAL-MODE: SYSTEM-BERICHTE
 # ==============================================================================
 if "bericht" in st.session_state.aktiver_use_case.lower():
     typ = st.selectbox("Typ", ["Offene Störungen", "Behobene Störungen", "Offenes Feedback", "Offene Wissenslücken", "Gesamtübersicht"], index=None, placeholder="Berichtsart wählen...")
@@ -219,7 +244,7 @@ if "bericht" in st.session_state.aktiver_use_case.lower():
     st.stop()
 
 # ==============================================================================
-# PROGRESSIVES HMI: SCHRITT 1 – DIE 3 ENTKOPPELTEN DROP-DOWNS
+# KANONISCHES HMI (Vorschlag 2): TABS ALS REINE WIDGET-CONTAINER
 # ==============================================================================
 bez_col, kat_col = df_wissen.columns[0], ("Wo?" if "Wo?" in df_wissen.columns else df_wissen.columns[1])
 
@@ -229,57 +254,55 @@ def get_liste(pattern):
         mask = mask & (df_wissen["Relevanz Gast"].astype(str).str.strip().str.lower() == "x")
     return sorted(df_wissen[mask][bez_col].dropna().drop_duplicates().astype(str).str.strip().tolist())
 
-# Callbacks regeln den exklusiven State-Reset im Hintergrund
-def cb_innen():
-    if st.session_state.sel_innen:
-        st.session_state.selected_object = st.session_state.sel_innen
-        st.session_state.sel_aussen = st.session_state.sel_naehe = None
-        st.session_state.selected_field = None
-        st.session_state.messages = []
+# Die Kapselung der State-Engine (Vorschlag 1)
+tab_innen, tab_aussen, tab_naehe = st.tabs(["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"])
 
-def cb_aussen():
-    if st.session_state.sel_aussen:
-        st.session_state.selected_object = st.session_state.sel_aussen
-        st.session_state.sel_innen = st.session_state.sel_naehe = None
-        st.session_state.selected_field = None
-        st.session_state.messages = []
+with tab_innen:
+    val_innen = st.selectbox("Wähle ein Objekt (Innenraum):", options=[None] + get_liste("innen"), key="widget_innen")
+with tab_aussen:
+    val_aussen = st.selectbox("Wähle ein Objekt (Außenbereich):", options=[None] + get_liste("außen|aussen"), key="widget_aussen")
+with tab_naehe:
+    val_naehe = st.selectbox("Wähle ein Objekt (Umgebung):", options=[None] + get_liste("nähe|naehe"), key="widget_naehe")
 
-def cb_naehe():
-    if st.session_state.sel_naehe:
-        st.session_state.selected_object = st.session_state.sel_naehe
-        st.session_state.sel_innen = st.session_state.sel_aussen = None
-        st.session_state.selected_field = None
-        st.session_state.messages = []
+# Isoliertes State-Routing vor dem Render-Stopp
+detected_selection = val_innen or val_aussen or val_naehe
 
-# Widget-Keys initialisieren
-if "sel_innen" not in st.session_state: st.session_state.sel_innen = None
-if "sel_aussen" not in st.session_state: st.session_state.sel_aussen = None
-if "sel_naehe" not in st.session_state: st.session_state.sel_naehe = None
+if st.checkbox("Ich kann das gewünschte Objekt nicht finden.", key="widget_notfound"):
+    detected_selection = "Nicht gefunden"
 
-# Rendern der 3 Felder laut Spezifikation
-st.selectbox("🏠 Ausstattung innen:", options=[None] + get_liste("innen"), key="sel_innen", on_change=cb_innen)
-st.selectbox("🌳 Ausstattung außen:", options=[None] + get_liste("außen|aussen"), key="sel_aussen", on_change=cb_aussen)
-st.selectbox("📍 In der Nähe:", options=[None] + get_liste("nähe|naehe"), key="sel_naehe", on_change=cb_naehe)
+if detected_selection and detected_selection != st.session_state.selected_object:
+    st.session_state.selected_object = detected_selection
+    st.session_state.selected_field = None
+    st.session_state.messages = []
+    st.rerun()
 
-if st.checkbox("Ich kann das gewünschte Objekt nicht finden.", key="not_found_check"):
-    if st.session_state.selected_object != "Nicht gefunden":
-        st.session_state.selected_object = "Nicht gefunden"
-        st.session_state.sel_innen = st.session_state.sel_aussen = st.session_state.sel_naehe = None
-        st.session_state.selected_field = None
-        st.session_state.messages = []
-        st.rerun()
+# Wenn die Kaskade auf Null steht, stoppt die App sauber hier
+if not st.session_state.selected_object: 
+    st.stop()
 
-# Harter Stop, falls noch kein Objekt bestimmt wurde
-if not st.session_state.selected_object: st.stop()
-
-# Status-Banner für visuelles Feedback
 st.markdown(f"<div style='background-color:#e8f5e9; padding:10px; border-radius:5px; color:#2e7d32; font-weight:bold; margin-top:10px; margin-bottom:15px;'>Aktives Objekt: {st.session_state.selected_object}</div>", unsafe_allow_html=True)
 
 # ==============================================================================
-# PROGRESSIVES HMI: SCHRITT 2 – DIE DYNAMISCH EINGEBLENDETE DETAIL-EBENE
+# DIAGNOSE MONITOR (EXAKT NACH SPEC)
 # ==============================================================================
+if st.session_state.debug_modus_aktiv:
+    with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR (Laufzeit-Metriken)", expanded=True):
+        d_col1, d_col2 = st.columns(2)
+        with d_col1:
+            st.metric(label="1. Aktive Rolle", value=str(st.session_state.get("aktive_rolle")))
+            st.metric(label="3. Gewähltes Objekt", value=str(st.session_state.selected_object))
+        with d_col2:
+            st.metric(label="2. Use Case \| Richtung", value=f"{st.session_state.get('aktiver_use_case')} \| {richtung}")
+        
+        st.write("**4. Letzter Matrix-Schreibstatus:**")
+        st.info(st.session_state.get("last_write_status"))
+        
+        st.write("**5. Letzter Kontext-Extrakt (KI-Input):**")
+        st.text_area(label="Matrix-Rohdaten", value=st.session_state.get("last_extracted_context"), height=120, disabled=True, label_visibility="collapsed")
 
-# FALL A: "Neue Information" verlangt zwingend ein zweites Dropdown (Spaltenauswahl)
+# ==============================================================================
+# PROGRESSIVES HMI: SCHRITT 2 – DETAIL-INTERAKTION
+# ==============================================================================
 if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.aktive_rolle == "Host":
     options_spalten = [c for c in df_wissen.columns if c.lower() not in ["bezeichnung", "wo?", "id", "kategorie", "relevanz gast"] and "status" not in c.lower()]
     st.selectbox("📄 Bitte wähle die Art der Information aus (Zielspalte):", options=[None] + options_spalten, key="selected_field")
@@ -290,17 +313,9 @@ if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.
     if st.button("💾 In Excel-Zentralmatrix speichern", type="primary") and txt.strip():
         execute_matrix_input_direct(st.session_state.selected_field, st.session_state.selected_object, txt.strip())
         st.success("Erfolgreich in Matrix dokumentiert!")
-        st.cache_data.clear()
     st.stop()
 
-# FALL B: Chat-Interface für Hilfe, Störung und Feedback
 else:
-    if st.session_state.debug_modus_aktiv:
-        with st.expander("🔍 SYSTEM-DIAGNOSE", expanded=False):
-            st.write(f"**UseCase:** {st.session_state.aktiver_use_case} | **Richtung:** {richtung}")
-            st.write(f"**Schreibstatus:** {st.session_state.last_write_status}")
-            st.text_area("Extrahierter Kontext", st.session_state.last_extracted_context, height=100)
-
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]): st.markdown(msg["content"])
         
@@ -323,12 +338,10 @@ else:
                         execute_matrix_input("Keine Information", st.session_state.selected_object, u_text)
                     else:
                         st.session_state.messages.append({"role": "assistant", "content": res.antwort_text})
-            st.cache_data.clear()
             st.rerun()
             
         elif richtung == "INPUT":
             with st.spinner("Protokolliere in Matrix..."):
                 execute_matrix_input(st.session_state.aktiver_use_case, st.session_state.selected_object, u_text)
                 st.session_state.messages.append({"role": "assistant", "content": danke_tmpl.replace("{use_case}", st.session_state.aktiver_use_case)})
-                st.cache_data.clear()
                 st.rerun()
