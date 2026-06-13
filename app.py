@@ -431,21 +431,9 @@ def generate_raw_report_context(filter_type):
                     
     return "\n".join(report_lines) if report_lines else "Keine passenden Einträge gefunden."
 
-def check_password_direct(pwd_input):
-    if not pwd_input or df_passwoerter is None or df_passwoerter.empty: return False
-    p_rolle_col, p_pwd_col = df_passwoerter.columns[0], df_passwoerter.columns[1]
-    erster_rollen_eintrag = str(df_passwoerter.iloc[0][p_rolle_col]).strip()
-    host_rows = df_passwoerter[df_passwoerter[p_rolle_col].astype(str).str.strip().str.lower() == erster_rollen_eintrag.lower()]
-    for _, row in host_rows.iterrows():
-        if str(pwd_input).strip() == str(row[p_pwd_col]).strip():
-            return True
-    return False
-
 # ==============================================================================
 # 6. HMI PRESENTATION LAYER (Strikte Linearisierung nach Ablaufmatrix)
 # ==============================================================================
-st.title("☀️ Villa Avatar")
-
 # Session-State Initialisierungen
 if "aktive_rolle" not in st.session_state: st.session_state.aktive_rolle = None
 if "aktiver_use_case" not in st.session_state: st.session_state.aktiver_use_case = None
@@ -454,7 +442,6 @@ if "bericht_filter" not in st.session_state: st.session_state.bericht_filter = N
 if "host_authentifiziert" not in st.session_state: st.session_state.host_authentifiziert = False
 if "debug_modus_aktiv" not in st.session_state: st.session_state.debug_modus_aktiv = False
 if "aktuell_gewaehltes_objekt" not in st.session_state: st.session_state.aktuell_gewaehltes_objekt = None
-if "neue_info_bestaetigt" not in st.session_state: st.session_state.neue_info_bestaetigt = False
 
 # SCHRITT 1: Rolle wählen (Gast / Host)
 neue_rolle = st.selectbox("Rolle", options=["Gast", "Host"], index=None, placeholder="Wer bist du?", label_visibility="collapsed")
@@ -465,7 +452,6 @@ if neue_rolle != st.session_state.aktive_rolle and neue_rolle is not None:
     st.session_state.host_authentifiziert = False
     st.session_state.debug_modus_aktiv = False
     st.session_state.aktuell_gewaehltes_objekt = None
-    st.session_state.neue_info_bestaetigt = False
     st.session_state.messages = []
     for key in list(st.session_state.keys()):
         if any(x in key for x in ["dropdown_", "target_col_"]): del st.session_state[key]
@@ -474,7 +460,7 @@ if neue_rolle != st.session_state.aktive_rolle and neue_rolle is not None:
 if not st.session_state.aktive_rolle:
     st.stop()
 
-# SCHRITT 1.5: Falls Host: Passwort-Feld. Erst nach korrekter Eingabe geht es weiter.
+# SCHRITT 1.5: Passwort-Gate für Host-Sicht
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     st.write("---")
     pwd_input = st.text_input("🔑 Bitte Passwort für Host-Sicht eingeben:", type="password")
@@ -511,7 +497,7 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
             st.error("🛑 Passwort-Matrix 'Passwort_Lexikon' nicht geladen oder leer. Bitte Admin kontaktieren.")
     st.stop()
 
-# SCHRITT 2: Use Case wählen (Deine Buttons) - abhängig von der Rolle
+# SCHRITT 2: Use Case wählen (Buttons)
 st.write("---")
 aktuelles_objekt = st.session_state.aktuell_gewaehltes_objekt
 aktuelle_richtung = None
@@ -553,7 +539,6 @@ if df_usecases is not None:
         st.session_state.aktiver_use_case = neuer_use_case
         st.session_state.bericht_filter = None
         st.session_state.aktuell_gewaehltes_objekt = None
-        st.session_state.neue_info_bestaetigt = False
         st.session_state.messages = []
         for key in list(st.session_state.keys()):
             if any(x in key for x in ["dropdown_", "target_col_"]): del st.session_state[key]
@@ -562,7 +547,7 @@ if df_usecases is not None:
 if not st.session_state.aktiver_use_case:
     st.stop()
 
-# Metadaten für Use Case laden
+# Metadaten aus UseCase_Lexikon auslesen
 uc_row = df_usecases[df_usecases[uc_col].astype(str).str.lower().str.strip() == st.session_state.aktiver_use_case.lower().strip()]
 if not uc_row.empty:
     aktuelle_richtung = str(uc_row.iloc[0][dir_col]).strip().upper()
@@ -571,7 +556,7 @@ if not uc_row.empty:
     if danke_col and pd.notna(uc_row.iloc[0][danke_col]):
         danke_text_template = str(uc_row.iloc[0][danke_col]).strip()
 
-# SCHRITT 3: Objekt-Auswahl über die 3 Dropdowns (Oder Sonderfall Bericht)
+# SCHRITT 3: Objekt-Auswahl (Oder Sonderfall Bericht)
 if "bericht" in st.session_state.aktiver_use_case.lower():
     st.write("")
     b_col1, b_col2 = st.columns(2)
@@ -594,7 +579,7 @@ if "bericht" in st.session_state.aktiver_use_case.lower():
     if not st.session_state.bericht_filter:
         st.stop()
 else:
-    # Parallele Dropdown-Auswahl rendern
+    # Die 3 standardmäßigen Objekt-Dropdowns anzeigen
     STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
     gewaehltes_temporaeres_objekt = None
     
@@ -618,21 +603,19 @@ else:
             
             dp_key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
             
-            # Auslesen des aktuellen Werts vor dem Rendern, falls das Objekt bereits im State fixiert ist
+            # Index-Zuweisung sichern, falls das Objekt hier hergehört
             aktueller_idx = None
             if st.session_state.aktuell_gewaehltes_objekt in verfuegbare_bez:
-                # Falls dieses spezifische Dropdown das gewählte Objekt enthält, setzen wir den Index fest
-                # Um Rerun-Schleifen zu verhindern, wird die Interaktivität nachfolgend via Logik gefangen
-                pass
+                aktueller_idx = verfuegbare_bez.index(st.session_state.aktuell_gewaehltes_objekt)
 
             val = st.selectbox(label=f"hidden_{kat}", options=verfuegbare_bez, index=aktueller_idx, placeholder=f"🔎 {kat} wählen...", key=dp_key, label_visibility="collapsed")
-            if val and not gewaehltes_temporaeres_objekt:
+            if val and val != st.session_state.aktuell_gewaehltes_objekt:
                 gewaehltes_temporaeres_objekt = val
 
-        # DER KNIFF: Sobald eine Auswahl existiert und sie neu ist, speichern wir sie und brechen sofort ab (Verhindert Rerun-Glitch)
-        if gewaehltes_temporaeres_objekt and gewaehltes_temporaeres_objekt != st.session_state.aktuell_gewaehltes_objekt:
+        if gewaehltes_temporaeres_objekt:
             st.session_state.aktuell_gewaehltes_objekt = gewaehltes_temporaeres_objekt
-            st.session_state.neue_info_bestaetigt = False
+            if f"target_col_{st.session_state.aktiver_use_case}" in st.session_state:
+                del st.session_state[f"target_col_{st.session_state.aktiver_use_case}"]
             st.rerun()
 
     if not st.session_state.aktuell_gewaehltes_objekt:
@@ -640,28 +623,20 @@ else:
         
     aktuelles_objekt = st.session_state.aktuell_gewaehltes_objekt
 
-    # SONDERFALL „Neue Information“: Sequentielles Dropdown + Bestätigungs-Button
+    # SONDERFALL „Neue Information“: Rendere das 2. Dropdown (Spaltenauswahl) direkt hier sequentiell darunter
     if st.session_state.aktive_rolle == "Host" and st.session_state.aktiver_use_case == "Neue Information":
         st.write("---")
-        st.info(f"Ausgewähltes Objekt: **{aktuelles_objekt}**")
-        
         spalten_options = get_datenspalten_options(df_wissen)
+        
+        # Rendere das zweite Dropdown zur Spaltenauswahl physisch auf der Oberfläche
         val_col = st.selectbox("📍 Bitte wähle das Ziel-Datenfeld (Art der Information):", options=spalten_options, index=None, key="neue_info_spalten_auswahl")
         
         if val_col:
             st.session_state[f"target_col_{st.session_state.aktiver_use_case}"] = val_col
-            
-            if st.button("Auswahl bestätigen", type="primary", key="btn_confirm_neue_info"):
-                st.session_state.neue_info_bestaetigt = True
-                st.rerun()
-                
-        if not st.session_state.neue_info_bestaetigt:
-            st.stop()
+            chat_abfrage_text = f"Gib hier den neuen Informationstext für '{aktuelles_objekt}' ➔ Spalte '{val_col}' ein:"
         else:
-            chat_abfrage_text = "Bitte gib hier den neuen Informationstext ein:"
-            st.success(f"Bestätigt: **{aktuelles_objekt}** ➔ Spalte: **{st.session_state.get(f'target_col_{st.session_state.aktiver_use_case}')}**")
-    else:
-        st.success(f"Aktives Objekt: **{aktuelles_objekt}**")
+            # KRITISCHE LOGIK-SPERRE: Verhindert, dass der Chat-Input mit dem fehlerhaften E6-Text geladen wird
+            st.stop()
 
 # ==============================================================================
 # 6.5 SYSTEM-DIAGNOSE MONITOR (NUR SICHTBAR WENN DER ADMIN-DEBUG-MODUS AKTIV IST)
