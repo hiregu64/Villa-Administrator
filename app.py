@@ -379,45 +379,73 @@ elif st.session_state.aktiver_use_case == "Neue Information" and st.session_stat
     st.stop()
 
 # ==============================================================================
-# WELT 2: FLEXIBLER KI-CHAT-MODUS
+# WELT 2: FLEXIBLER KI-CHAT-MODUS (SCHRITT 1: OBJEKTAUSWAHL-FORMULAR)
 # ==============================================================================
 else:
-    STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
     bez_spalte, kat_spalte = df_wissen.columns[0], (df_wissen.columns[1] if "Wo?" not in df_wissen.columns else "Wo?")
     
-    st.write("")
-    
-    # Rendern der voneinander isolierten Kaskaden-Dropdowns mit eindeutigen Labels
-    for kat in STANDARD_DROPDOWNS:
-        if "innen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
-        elif "außen" in kat.lower() or "aussen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("außen|aussen", case=False, na=False)
-        else: mask = df_wissen[kat_spalte].astype(str).str.contains("nähe|naehe|In der Nähe", case=False, na=False)
-        
-        if st.session_state.aktive_rolle == "Gast" and "Relevanz Gast" in df_wissen.columns:
-            mask = mask & (df_wissen["Relevanz Gast"].astype(str).str.strip().str.lower() == "x")
-        
-        verfuegbare_bez = df_wissen[mask][bez_spalte].dropna().drop_duplicates().tolist()
-        verfuegbare_bez = sorted([str(b).strip() for b in verfuegbare_bez])
-        if "Nicht gefunden" in verfuegbare_bez: verfuegbare_bez.remove("Nicht gefunden")
-        verfuegbare_bez.append("Nicht gefunden")
-        
-        dp_key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
-        
-        aktueller_idx = None
-        if st.session_state.selected_object in verfuegbare_bez:
-            aktueller_idx = verfuegbare_bez.index(st.session_state.selected_object)
-            
-        # FIX: Eindeutige Label-Strings pro Dropdown verhindern das Verschwinden des Widgets
-        auswahl = st.selectbox(label=f"Auswahl {kat}", options=verfuegbare_bez, index=aktueller_idx, placeholder=f"🔎 {kat} wählen...", key=dp_key, label_visibility="collapsed")
-        if auswahl and auswahl != st.session_state.selected_object:
-            st.session_state.selected_object = auswahl
-            st.session_state.messages = []
-            st.rerun()
-
+    # SCHRITT 1: Wenn noch kein Objekt final ausgewählt wurde, zeigen wir das transaktionale Formular
     if not st.session_state.selected_object:
-        st.stop()
+        st.subheader("🔍 Objektauswahl")
+        st.info("Bitte wähle aus einer der Kategorien das passende Objekt aus:")
         
-    # DIAGNOSE MONITOR
+        with st.form("objekt_auswahl_form"):
+            auswahl_innen = None
+            auswahl_aussen = None
+            auswahl_naehe = None
+            
+            # Kategorie 1: Innen
+            mask_innen = df_wissen[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
+            if st.session_state.aktive_rolle == "Gast" and "Relevanz Gast" in df_wissen.columns:
+                mask_innen = mask_innen & (df_wissen["Relevanz Gast"].astype(str).str.strip().str.lower() == "x")
+            liste_innen = sorted(df_wissen[mask_innen][bez_spalte].dropna().drop_duplicates().astype(str).str.strip().tolist())
+            auswahl_innen = st.selectbox("🏠 Ausstattung innen:", options=[None] + liste_innen, index=0, placeholder="Objekt innen wählen...")
+            
+            # Kategorie 2: Außen
+            mask_aussen = df_wissen[kat_spalte].astype(str).str.contains("außen|aussen", case=False, na=False)
+            if st.session_state.aktive_rolle == "Gast" and "Relevanz Gast" in df_wissen.columns:
+                mask_aussen = mask_aussen & (df_wissen["Relevanz Gast"].astype(str).str.strip().str.lower() == "x")
+            liste_aussen = sorted(df_wissen[mask_aussen][bez_spalte].dropna().drop_duplicates().astype(str).str.strip().tolist())
+            auswahl_aussen = st.selectbox("🌳 Ausstattung außen:", options=[None] + liste_aussen, index=0, placeholder="Objekt außen wählen...")
+            
+            # Kategorie 3: Nähe
+            mask_naehe = df_wissen[kat_spalte].astype(str).str.contains("nähe|naehe|In der Nähe", case=False, na=False)
+            if st.session_state.aktive_rolle == "Gast" and "Relevanz Gast" in df_wissen.columns:
+                mask_naehe = mask_naehe & (df_wissen["Relevanz Gast"].astype(str).str.strip().str.lower() == "x")
+            liste_naehe = sorted(df_wissen[mask_naehe][bez_spalte].dropna().drop_duplicates().astype(str).str.strip().tolist())
+            auswahl_naehe = st.selectbox("📍 In der Nähe:", options=[None] + liste_naehe, index=0, placeholder="Objekt in der Nähe wählen...")
+            
+            st.write("---")
+            nicht_gefunden_check = st.checkbox("Ich kann das gewünschte Objekt in den Listen nicht finden.")
+            
+            if st.form_submit_button("➔ Objekt bestätigen und Chat öffnen", type="primary"):
+                # Auswertung der Hierarchie
+                gewaehlt = None
+                if nicht_gefunden_check:
+                    gewaehlt = "Nicht gefunden"
+                elif auswahl_innen:
+                    gewaehlt = auswahl_innen
+                elif auswahl_aussen:
+                    gewaehlt = auswahl_aussen
+                elif auswahl_naehe:
+                    gewaehlt = auswahl_naehe
+                    
+                if gewaehlt:
+                    st.session_state.selected_object = gewaehlt
+                    st.session_state.messages = []
+                    st.rerun()
+                else:
+                    st.error("Bitte wählen Sie zuerst ein Objekt aus oder aktivieren Sie das Kontrollkästchen 'Nicht gefunden'.")
+        st.stop()
+
+    # SCHRITT 2: Sobald ein Objekt gewählt ist, schaltet das HMI um und zeigt das Objekt + Chat
+    st.success(f"Selected: **{st.session_state.selected_object}**")
+    if st.button("🔄 Anderes Objekt auswählen", use_container_width=False):
+        st.session_state.selected_object = None
+        st.session_state.messages = []
+        st.rerun()
+        
+    # DIAGNOSE MONITOR (Wird nur für autorisierte Hosts im Debug-Mode gerendert)
     if st.session_state.debug_modus_aktiv:
         st.write("")
         with st.expander("🔍 SYSTEM-DIAGNOSE MONITOR (Laufzeit-Metriken)", expanded=True):
