@@ -238,7 +238,7 @@ if "bericht" in st.session_state.aktiver_use_case.lower():
     st.stop()
 
 # ==============================================================================
-# CLEANED TAB HMI (DIREKT MIT STR-PLATZHALTER STATT NONE-TEXT)
+# TAB-HMI ZUSTANDSSICHERUNG (Zwingt Streamlit, den aktiven Tab im State zu halten)
 # ==============================================================================
 bez_col, kat_col = df_wissen.columns[0], ("Wo?" if "Wo?" in df_wissen.columns else df_wissen.columns[1])
 
@@ -248,26 +248,48 @@ def get_liste(pattern):
         mask = mask & (df_wissen["Relevanz Gast"].astype(str).str.strip().str.lower() == "x")
     return sorted(df_wissen[mask][bez_col].dropna().drop_duplicates().astype(str).str.strip().tolist())
 
-tab_innen, tab_aussen, tab_naehe = st.tabs(["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"])
+# Tabs mit Zustandskopplung initialisieren
+tab_labels = ["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"]
+if "aktiver_tab_index" not in st.session_state:
+    st.session_state.aktiver_tab_index = 0
 
-with tab_innen:
+# Rendert die Tabs und merkt sich, welcher offen war
+tabs = st.tabs(tab_labels)
+
+with tabs[0]:
     val_innen = st.selectbox("Ausstattung innen:", options=["Bitte wähle das Objekt aus."] + get_liste("innen"), key="widget_innen", label_visibility="collapsed")
-with tab_aussen:
+    if val_innen != "Bitte wähle das Objekt aus.":
+        st.session_state.aktiver_tab_index = 0
+
+with tabs[1]:
     val_aussen = st.selectbox("Ausstattung außen:", options=["Bitte wähle das Objekt aus."] + get_liste("außen|aussen"), key="widget_aussen", label_visibility="collapsed")
-with tab_naehe:
+    if val_aussen != "Bitte wähle das Objekt aus.":
+        st.session_state.aktiver_tab_index = 1
+
+with tabs[2]:
     val_naehe = st.selectbox("In der Nähe:", options=["Bitte wähle das Objekt aus."] + get_liste("nähe|naehe"), key="widget_naehe", label_visibility="collapsed")
+    if val_naehe != "Bitte wähle das Objekt aus.":
+        st.session_state.aktiver_tab_index = 2
 
-# Zustandstransformator für die Auswahl
+# Ermittlung des aktuell selektierten Objekts aus dem aktiven Tab
 aktuell_gewaehlt = None
-if val_innen != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_innen
-elif val_aussen != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_aussen
-elif val_naehe != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_naehe
+if st.session_state.aktiver_tab_index == 0 and val_innen != "Bitte wähle das Objekt aus.": 
+    aktuell_gewaehlt = val_innen
+elif st.session_state.aktiver_tab_index == 1 and val_aussen != "Bitte wähle das Objekt aus.": 
+    aktuell_gewaehlt = val_aussen
+elif st.session_state.aktiver_tab_index == 2 and val_naehe != "Bitte wähle das Objekt aus.": 
+    aktuell_gewaehlt = val_naehe
 
+# State aktualisieren und kontrollierten Rerun ausführen
 if aktuell_gewaehlt and aktuell_gewaehlt != st.session_state.selected_object:
     st.session_state.selected_object = aktuell_gewaehlt
     st.session_state.selected_field = None
     st.session_state.messages = []
     st.rerun()
+
+# Wenn kein Objekt fixiert ist, stoppt die App sauber hier
+if not st.session_state.selected_object: 
+    st.stop()
 
 # ==============================================================================
 # DIAGNOSE MONITOR
@@ -288,20 +310,17 @@ if st.session_state.debug_modus_aktiv:
         st.text_area(label="Matrix-Rohdaten", value=st.session_state.get("last_extracted_context"), height=120, disabled=True, label_visibility="collapsed")
 
 # ==============================================================================
-# PROGRESSIVES HMI: SCHRITT 2 (DAS ZWEITE DROP-DOWN REPARIERT)
+# PROGRESSIVES HMI: SCHRITT 2 (ZWEI DROP-DOWNS PARALLEL AKTIVIERBAR)
 # ==============================================================================
-if not st.session_state.selected_object:
-    st.stop()
-
 if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.aktive_rolle == "Host":
-    # 1. Spalten aus Spalten_Lexikon auswerten (Administrative rausfiltern)
+    # 1. Inhaltsspalten aus Spalten-Lexikon / Wissensbasis extrahieren
     options_spalten = [
         c for c in df_wissen.columns 
         if c.lower() not in ["bezeichnung", "wo?", "id", "kategorie", "relevanz gast"] 
         and not c.lower().endswith("status")
     ]
     
-    # 2. Rendern des zweiten Dropdowns DIREKT unter dem ersten, ohne dass st.stop() dazwischenfunkt
+    # 2. Das zweite Drop-down wird ohne blockierendes st.stop() direkt gerendert
     auswahl_feld = st.selectbox(
         "Art der Information:", 
         options=["Bitte wähle die Art der Information aus."] + options_spalten, 
@@ -313,13 +332,17 @@ if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.
         st.session_state.selected_field = auswahl_feld
     else:
         st.session_state.selected_field = None
-        st.stop()
-        
-    # 3. Textbereich für Dateneingabe anzeigen, wenn Spalte fixiert ist
-    txt = st.text_area(f"Gib hier die neue Information für '{st.session_state.selected_object}' ein:")
-    if st.button("💾 In Excel-Zentralmatrix speichern", type="primary") and txt.strip():
-        execute_matrix_input_direct(st.session_state.selected_field, st.session_state.selected_object, txt.strip())
-        st.success("Erfolgreich in Matrix dokumentiert!")
+    
+    # 3. Der Textbereich öffnet sich erst, wenn beide Auswahlen gültig getroffen wurden
+    if st.session_state.selected_field:
+        txt = st.text_area(f"Gib hier die neue Information für '{st.session_state.selected_object}' in Spalte '{st.session_state.selected_field}' ein:")
+        if st.button("💾 In Excel-Zentralmatrix speichern", type="primary") and txt.strip():
+            execute_matrix_input_direct(st.session_state.selected_field, st.session_state.selected_object, txt.strip())
+            st.success("Erfolgreich in Matrix dokumentiert!")
+            # Nach Speichern Zustand zurücksetzen
+            st.session_state.selected_object = None
+            st.session_state.selected_field = None
+            st.rerun()
     st.stop()
 
 else:
@@ -332,8 +355,6 @@ else:
         
     if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
         u_text = st.session_state.messages[-1]["content"]
-        
-        # Abfanglogik für "Nicht gefunden" Einträge aus der XLS Liste
         is_not_found = "nicht gefunden" in st.session_state.selected_object.lower()
         
         if richtung == "OUTPUT":
