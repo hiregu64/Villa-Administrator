@@ -13,7 +13,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 # ==============================================================================
-# 1. STRUCTURATED OUTPUT SCHEMA (Laut Spezifikation Kapitel 4.4)
+# 1. STRUCTURATED OUTPUT SCHEMA
 # ==============================================================================
 class KiAntwortSchema(BaseModel):
     wissensluecke_erkannt: bool = Field(
@@ -58,7 +58,7 @@ def get_datenspalten_options(df):
     return [str(col).strip() for col in df.columns if "status" not in str(col).lower() and str(col).strip().lower() not in geschuetzt]
 
 # ==============================================================================
-# 3. DATEN-LADE ENGINE (Vier-Blatt-Modell laut Spezifikation)
+# 3. DATEN-LADE ENGINE
 # ==============================================================================
 @st.cache_data(ttl=30)
 def load_dynamic_data():
@@ -323,7 +323,6 @@ if df_usecases is not None:
     cols = st.columns(len(erlaubte_buttons))
     for idx, uc_name in enumerate(erlaubte_buttons):
         with cols[idx]:
-            # Auslesung des ausführlichen Textes aus Spalte 4 (Button_HMI)
             button_label = uc_name
             if btn_col:
                 btn_match = df_usecases[df_usecases[uc_col].astype(str).str.strip() == str(uc_name).strip()]
@@ -377,21 +376,22 @@ elif st.session_state.aktiver_use_case == "Neue Information" and st.session_stat
             info_text = st.text_area(f"Gib hier den neuen Informationstext für '{obj_wahl}' ➔ '{feld_wahl}' ein:", height=120)
             if st.form_submit_button("💾 Eintrag in Excel-Zentralmatrix speichern", type="primary") and info_text.strip():
                 with st.spinner("Schreibe in Zentralmatrix..."):
-                    execute_matrix_write_direct(feld_wahl, obj_wahl, info_text.strip())
+                    # KORREKTUR: Hier wurde die korrekte, oben definierte Funktion verknüpft
+                    execute_matrix_input_direct(feld_wahl, obj_wahl, info_text.strip())
                     st.success(f"Erfolgreich eingetragen! Das Thema '{feld_wahl}' wurde für das Objekt '{obj_wahl}' aktualisiert.")
     st.stop()
 
 # ==============================================================================
-# WELT 2: FLEXIBLER KI-CHAT-MODUS (Die 3 originalen Gast-Dropdowns wiederhergestellt)
+# WELT 2: FLEXIBLER KI-CHAT-MODUS
 # ==============================================================================
 else:
     STANDARD_DROPDOWNS = ["Ausstattung innen", "Ausstattung außen", "In der Nähe"]
     bez_spalte, kat_spalte = df_wissen.columns[0], (df_wissen.columns[1] if "Wo?" not in df_wissen.columns else "Wo?")
     
     st.write("")
-    gewaehltes_temporaeres_objekt = None
     
-    # Render der drei originalen Dropdowns untereinander
+    # KORREKTUR: Um ein unkontrolliertes Überschreiben im Schleifendurchlauf zu verhindern,
+    # wird nun pro Kategorie ein isoliertes Select-Feld gerendert.
     for kat in STANDARD_DROPDOWNS:
         if "innen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("innen", case=False, na=False)
         elif "außen" in kat.lower() or "aussen" in kat.lower(): mask = df_wissen[kat_spalte].astype(str).str.contains("außen|aussen", case=False, na=False)
@@ -406,15 +406,19 @@ else:
         verfuegbare_bez.append("Nicht gefunden")
         
         dp_key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
-        aktueller_idx = verfuegbare_bez.index(st.session_state.selected_object) if st.session_state.selected_object in verfuegbare_bez else None
         
+        # Bestimme den aktuellen Index, falls dieses Feld aktiv gewählt wurde
+        aktueller_idx = None
+        if st.session_state.selected_object in verfuegbare_bez:
+            aktueller_idx = verfuegbare_bez.index(st.session_state.selected_object)
+            
         val = st.selectbox(label=f"hidden_{kat}", options=verfuegbare_bez, index=aktueller_idx, placeholder=f"🔎 {kat} wählen...", key=dp_key, label_visibility="collapsed")
-        if val and val != st.session_state.selected_object:
-            gewaehltes_temporaeres_objekt = val
-
-    if gewaehltes_temporaeres_objekt:
-        st.session_state.selected_object = gewaehltes_temporaeres_objekt
-        st.rerun()
+        
+        # Sobald eine valide Auswahl getroffen wird, die vom aktuellen Zustand abweicht, fixieren
+        if val and val != st.session_state.selected_object and st.active_event is not None:
+            st.session_state.selected_object = val
+            st.session_state.messages = []
+            st.rerun()
 
     if not st.session_state.selected_object:
         st.stop()
@@ -440,23 +444,4 @@ else:
         if aktuelle_richtung == "OUTPUT":
             if st.session_state.selected_object == "Nicht gefunden":
                 execute_transitional_routing(aktueller_nutzer_text, "Nicht gefunden")
-                st.rerun()
-            else:
-                with st.spinner("Durchsuche Matrix..."):
-                    context_str = extract_context_for_object(st.session_state.selected_object)
-                    res = call_gemini_api_structured(aktueller_nutzer_text, context_str)
-                    
-                    luecken_phrasen = ["keine information", "weiß ich nicht", "nicht hinterlegt", "leider nein", "nicht bekannt", "fehlen mir details"]
-                    if res.wissensluecke_erkannt or res.antwort_text == "" or any(p in res.antwort_text.lower() for p in luecken_phrasen):
-                        execute_transitional_routing(aktueller_nutzer_text, st.session_state.selected_object)
-                    else:
-                        st.session_state.messages.append({"role": "assistant", "content": res.antwort_text})
-                    st.rerun()
-                    
-        elif aktuelle_richtung == "INPUT":
-            with st.spinner("Protokolliere Eintrag in Zentralmatrix..."):
-                execute_matrix_input(st.session_state.aktiver_use_case, st.session_state.selected_object, aktueller_nutzer_text)
-                danke_satz = danke_template.replace("{use_case}", st.session_state.aktiver_use_case)
-                st.session_state.messages.append({"role": "assistant", "content": danke_satz})
-                st.cache_data.clear()
                 st.rerun()
