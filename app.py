@@ -432,8 +432,11 @@ def generate_raw_report_context(filter_type):
     return "\n".join(report_lines) if report_lines else "Keine passenden Einträge gefunden."
 
 # ==============================================================================
-# 6. HMI PRESENTATION LAYER (Strikte Linearisierung nach Ablaufmatrix)
+# 6. HMI PRESENTATION LAYER (DETERMINISTISCHER TITEL & KASKADENFÜHRUNG)
 # ==============================================================================
+# UNVERRÜCKBAR AN ERSTER STELLE: Titel der Applikation
+st.title("☀️ Villa Avatar")
+
 # Session-State Initialisierungen
 if "aktive_rolle" not in st.session_state: st.session_state.aktive_rolle = None
 if "aktiver_use_case" not in st.session_state: st.session_state.aktiver_use_case = None
@@ -603,7 +606,6 @@ else:
             
             dp_key = f"dropdown_{kat}_{st.session_state.aktiver_use_case}"
             
-            # Index-Zuweisung sichern, falls das Objekt hier hergehört
             aktueller_idx = None
             if st.session_state.aktuell_gewaehltes_objekt in verfuegbare_bez:
                 aktueller_idx = verfuegbare_bez.index(st.session_state.aktuell_gewaehltes_objekt)
@@ -618,25 +620,26 @@ else:
                 del st.session_state[f"target_col_{st.session_state.aktiver_use_case}"]
             st.rerun()
 
-    if not st.session_state.aktuell_gewaehltes_objekt:
-        st.stop()
-        
-    aktuelles_objekt = st.session_state.aktuell_gewaehltes_objekt
-
-    # SONDERFALL „Neue Information“: Rendere das 2. Dropdown (Spaltenauswahl) direkt hier sequentiell darunter
-    if st.session_state.aktive_rolle == "Host" and st.session_state.aktiver_use_case == "Neue Information":
+    # !!! KORREKTUR DER KASKADENREIHENFOLGE !!!
+    # Zeichne das 2. Dropdown (Art der Information), BEVOR die logische Sperre greift.
+    if st.session_state.aktive_rolle == "Host" and st.session_state.aktiver_use_case == "Neue Information" and st.session_state.aktuell_gewaehltes_objekt:
         st.write("---")
         spalten_options = get_datenspalten_options(df_wissen)
         
-        # Rendere das zweite Dropdown zur Spaltenauswahl physisch auf der Oberfläche
+        # Das Dropdown wird jetzt physisch IMMER gezeichnet, sobald das Objekt gewählt ist.
         val_col = st.selectbox("📍 Bitte wähle das Ziel-Datenfeld (Art der Information):", options=spalten_options, index=None, key="neue_info_spalten_auswahl")
         
         if val_col:
             st.session_state[f"target_col_{st.session_state.aktiver_use_case}"] = val_col
-            chat_abfrage_text = f"Gib hier den neuen Informationstext für '{aktuelles_objekt}' ➔ Spalte '{val_col}' ein:"
+            chat_abfrage_text = f"Gib hier den neuen Informationstext für '{st.session_state.aktuell_gewaehltes_objekt}' ➔ Spalte '{val_col}' ein:"
         else:
-            # KRITISCHE LOGIK-SPERRE: Verhindert, dass der Chat-Input mit dem fehlerhaften E6-Text geladen wird
+            # Wenn das 2. Dropdown da ist, aber noch leer, blockieren wir den Chat-Input hier (Verhindert Laden des E6-Texts)
             st.stop()
+
+    if not st.session_state.aktuell_gewaehltes_objekt:
+        st.stop()
+        
+    aktuelles_objekt = st.session_state.aktuell_gewaehltes_objekt
 
 # ==============================================================================
 # 6.5 SYSTEM-DIAGNOSE MONITOR (NUR SICHTBAR WENN DER ADMIN-DEBUG-MODUS AKTIV IST)
