@@ -224,19 +224,6 @@ richtung = str(uc_row.iloc[0][df_usecases.columns[1]]).strip().upper() if not uc
 fragetext = str(uc_row.iloc[0][df_usecases.columns[4]]).strip() if not uc_row.empty and len(df_usecases.columns) > 4 and pd.notna(uc_row.iloc[0][df_usecases.columns[4]]) else "Wie kann ich helfen?"
 danke_tmpl = str(uc_row.iloc[0][df_usecases.columns[5]]).strip() if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]) else "Danke!"
 
-# ==============================================================================
-# SPEZIAL-MODE: SYSTEM-BERICHTE
-# ==============================================================================
-if "bericht" in st.session_state.aktiver_use_case.lower():
-    typ = st.selectbox("Typ", ["Offene Störungen", "Behobene Störungen", "Offenes Feedback", "Offene Wissenslücken", "Gesamtübersicht"], index=None, placeholder="Berichtsart wählen...")
-    if typ and st.button("📊 Bericht generieren", type="primary", use_container_width=True):
-        lines = []
-        for c in [col for col in df_wissen.columns if any(x in col.lower() for x in ["störung", "feedback", "information"]) and "status" not in col.lower()]:
-            for _, r in df_wissen.iterrows():
-                if pd.notna(r[c]) and str(r[c]).strip(): lines.append(f"Objekt: {r[df_wissen.columns[0]]} | Feld: {c}\nEintrag: {r[c]}\n---")
-        st.markdown(call_gemini(f"Strukturiere das chronologisch:\n\n" + "\n".join(lines), structured=False) if lines else "Keine Einträge.")
-    st.stop()
-
 # Helper zum Laden der Listen für die Standard-Tabs
 bez_col, kat_col = df_wissen.columns[0], ("Wo?" if "Wo?" in df_wissen.columns else df_wissen.columns[1])
 def get_liste(pattern):
@@ -246,7 +233,7 @@ def get_liste(pattern):
     return sorted(df_wissen[mask][bez_col].dropna().drop_duplicates().astype(str).str.strip().tolist())
 
 # ==============================================================================
-# 🎯 REPARATUR-PFAD: EXKLUSIVE ISOLATION FÜR "NEUE INFORMATION" (HOST)
+# 🎯 PRIORISIERTE SEKTION FÜR "NEUE INFORMATION" (DURCHBRICHT DIE TEXT-SCHLEIFE)
 # ==============================================================================
 if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.aktive_rolle == "Host":
     st.subheader("📝 Neue Information erfassen")
@@ -289,6 +276,19 @@ if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.
                 st.session_state.selected_object = None
                 st.session_state.selected_field = None
                 st.rerun()
+    st.stop() # HIERMIT WIRD VERHINDERT, DASS DER TEXT AUS DEM LEXIKON IN DEN CHAT GERÄT
+
+# ==============================================================================
+# SPEZIAL-MODE: SYSTEM-BERICHTE
+# ==============================================================================
+if "bericht" in st.session_state.aktiver_use_case.lower():
+    typ = st.selectbox("Typ", ["Offene Störungen", "Behobene Störungen", "Offenes Feedback", "Offene Wissenslücken", "Gesamtübersicht"], index=None, placeholder="Berichtsart wählen...")
+    if typ and st.button("📊 Bericht generieren", type="primary", use_container_width=True):
+        lines = []
+        for c in [col for col in df_wissen.columns if any(x in col.lower() for x in ["störung", "feedback", "information"]) and "status" not in col.lower()]:
+            for _, r in df_wissen.iterrows():
+                if pd.notna(r[c]) and str(r[c]).strip(): lines.append(f"Objekt: {r[df_wissen.columns[0]]} | Feld: {c}\nEintrag: {r[c]}\n---")
+        st.markdown(call_gemini(f"Strukturiere das chronologisch:\n\n" + "\n".join(lines), structured=False) if lines else "Keine Einträge.")
     st.stop()
 
 # ==============================================================================
