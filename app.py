@@ -40,7 +40,7 @@ for key, value in [
     ("selected_field", None), ("messages", []), ("host_authentifiziert", False), 
     ("debug_modus_aktiv", False), ("last_write_status", "Noch kein Schreibvorgang."), 
     ("last_extracted_context", "Kein Kontext extrahiert."), ("matrix_data", None),
-    ("erfolgsmeldung_anzeigen", None)
+    ("erfolgsmeldung_anzeigen", None), ("host_text_wert", "")
 ]:
     if key not in st.session_state: st.session_state[key] = value
 
@@ -133,7 +133,7 @@ def extract_context_for_object(objekt_name):
     return st.session_state.last_extracted_context
 
 # ==============================================================================
-# 5. MATRIZEN-SCHREIBENGINE (MIT ISSUE 1 KORREKTUR: BLAUER TEXT)
+# 5. MATRIZEN-SCHREIBENGINE (SCHRIFTFARBE BLAU #1F4E78)
 # ==============================================================================
 def execute_matrix_input_direct(physische_spalte, objekt, text):
     if drive_service is None or df_wissen is None: return
@@ -157,7 +157,7 @@ def execute_matrix_input_direct(physische_spalte, objekt, text):
             ws.cell(row_idx, col_idx).value = f"{old}\n[{datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | {st.session_state.aktive_rolle}]: {text}".strip()
             ws.cell(row_idx, col_idx).alignment = Alignment(wrap_text=True)
             
-            # ISSUE 1 ERFÜLLT: Kein farbiger Hintergrund. Die Schriftart (Font) wird auf Blau (#1F4E78) gesetzt.
+            # Textfarbe in Excel wird auf das geforderte Blau (#1F4E78) formatiert
             ws.cell(row_idx, col_idx).font = Font(color="1F4E78", bold=False)
             
             status_idx = find_column_by_fuzzy_name(headers, f"{physische_spalte} Status")
@@ -191,6 +191,7 @@ if role and role != st.session_state.aktive_rolle:
     st.session_state.aktive_rolle = role
     st.session_state.aktiver_use_case, st.session_state.selected_object, st.session_state.selected_field, st.session_state.messages = None, None, None, []
     st.session_state["erfolgsmeldung_anzeigen"] = None
+    st.session_state["host_text_wert"] = ""
     st.rerun()
 
 if not st.session_state.aktive_rolle: st.stop()
@@ -222,6 +223,7 @@ if df_usecases is not None:
                 st.session_state.selected_field = None
                 st.session_state.messages = []
                 st.session_state["erfolgsmeldung_anzeigen"] = None
+                st.session_state["host_text_wert"] = ""
                 st.rerun()
 
 if not st.session_state.aktiver_use_case: st.stop()
@@ -232,7 +234,7 @@ if not st.session_state.aktiver_use_case: st.stop()
 # ==============================================================================
 current_uc_clean = str(st.session_state.aktiver_use_case).strip().lower()
 
-# Persistenten Zustand für Issue 4 (Erfolgsmeldung nach Rerun) rendern
+# Persistenten Zustand für den Abschlusssatz rendern
 if "erfolgsmeldung_anzeigen" in st.session_state and st.session_state["erfolgsmeldung_anzeigen"]:
     st.success(st.session_state["erfolgsmeldung_anzeigen"])
 
@@ -244,34 +246,46 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
         mask = df_wissen[kat_col].astype(str).str.contains(pattern, case=False, na=False)
         return sorted(df_wissen[mask][bez_col].dropna().drop_duplicates().astype(str).str.strip().tolist())
 
-    # ISSUE 2 ERFÜLLT: Keine falsche/unnötige Überschrift. Wir rendern direkt die Tabs.
+    # Sauberer Einstieg direkt über die Tabs
     tab_innen, tab_aussen, tab_naehe = st.tabs(["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"])
 
+    # Ermittlung des aktuell im Session State hinterlegten Objekts für die korrekte Tab-Vorauswahl
+    current_obj = st.session_state.selected_object
+    
     with tab_innen:
-        # ISSUE 3 ERFÜLLT: Platzhalter-Text steht nativ IM Dropdown über 'placeholder'. Kein Label darüber.
-        val_innen = st.selectbox("Ausstattung innen", options=get_liste_host("innen"), index=None, placeholder="Bitte wähle das Objekt aus", key="h_innen", label_visibility="collapsed")
+        options_innen = get_liste_host("innen")
+        idx_innen = options_innen.index(current_obj) if current_obj in options_innen else None
+        val_innen = st.selectbox("Ausstattung innen", options=options_innen, index=idx_innen, placeholder="Bitte wähle das Objekt aus", key="h_innen", label_visibility="collapsed")
     with tab_aussen:
-        val_aussen = st.selectbox("Ausstattung außen", options=get_liste_host("außen|aussen"), index=None, placeholder="Bitte wähle das Objekt aus", key="h_aussen", label_visibility="collapsed")
+        options_aussen = get_liste_host("außen|aussen")
+        idx_aussen = options_aussen.index(current_obj) if current_obj in options_aussen else None
+        val_aussen = st.selectbox("Ausstattung außen", options=options_aussen, index=idx_aussen, placeholder="Bitte wähle das Objekt aus", key="h_aussen", label_visibility="collapsed")
     with tab_naehe:
-        val_naehe = st.selectbox("In der Nähe", options=get_liste_host("nähe|naehe"), index=None, placeholder="Bitte wähle das Objekt aus", key="h_naehe", label_visibility="collapsed")
+        options_naehe = get_liste_host("nähe|naehe")
+        idx_naehe = options_naehe.index(current_obj) if current_obj in options_naehe else None
+        val_naehe = st.selectbox("In der Nähe", options=options_naehe, index=idx_naehe, placeholder="Bitte wähle das Objekt aus", key="h_naehe", label_visibility="collapsed")
 
-    # Auswertung der Tab-Auswahl
-    aktuell_gewaehlt = None
-    if val_innen is not None: aktuell_gewaehlt = val_innen
-    elif val_aussen is not None: aktuell_gewaehlt = val_aussen
-    elif val_naehe is not None: aktuell_gewaehlt = val_naehe
-
-    if aktuell_gewaehlt and aktuell_gewaehlt != st.session_state.selected_object:
-        st.session_state.selected_object = aktuell_gewaehlt
-        st.session_state.selected_field = None 
-        st.session_state["erfolgsmeldung_anzeigen"] = None # Bei Objektwechsel die alte Meldung löschen
+    # Auswertung welcher Tab bedient wurde
+    if val_innen and val_innen != st.session_state.selected_object:
+        st.session_state.selected_object = val_innen
+        st.session_state.selected_field = None
+        st.session_state["erfolgsmeldung_anzeigen"] = None
+        st.rerun()
+    elif val_aussen and val_aussen != st.session_state.selected_object:
+        st.session_state.selected_object = val_aussen
+        st.session_state.selected_field = None
+        st.session_state["erfolgsmeldung_anzeigen"] = None
+        st.rerun()
+    elif val_naehe and val_naehe != st.session_state.selected_object:
+        st.session_state.selected_object = val_naehe
+        st.session_state.selected_field = None
+        st.session_state["erfolgsmeldung_anzeigen"] = None
         st.rerun()
 
-    # Wenn ein Objekt gewählt wurde, zeigen wir das Spalten-Dropdown
+    # Das zweite Dropdown erscheint nahtlos unter dem ersten Dropdown (Das blaue Hinweisfeld wurde entfernt)
     if st.session_state.selected_object:
-        st.info(f"Ausgewähltes Objekt: **{st.session_state.selected_object}**")
         
-        # Rigorose Filterung aller administrativen Spalten vor "Marke/ Typ" gemäß Spalten_Lexikon
+        # Rigorose Filterung aller administrativen Felder (Spaltenname, Bezeichnung, Wo, Relevanz, System) vor "Marke/ Typ"
         if df_lexikon is not None:
             lexikon_spalten = df_lexikon[df_lexikon.columns[0]].dropna().astype(str).str.strip().tolist()
             options_spalten = [
@@ -282,7 +296,6 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
         else:
             options_spalten = [c for c in df_wissen.columns if c.lower() not in ["bezeichnung", "wo?", "id", "kategorie", "relevanz gast", "system"] and not c.lower().endswith("status")]
 
-        # ISSUE 3 ERFÜLLT: Platzhalter-Text steht nativ IM Dropdown-Fenster. Keine Zeile darüber.
         default_idx = options_spalten.index(st.session_state.selected_field) if st.session_state.selected_field in options_spalten else None
 
         s_auswahl = st.selectbox(
@@ -296,28 +309,31 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
         
         if s_auswahl and s_auswahl != st.session_state.selected_field:
             st.session_state.selected_field = s_auswahl
+            st.session_state["erfolgsmeldung_anzeigen"] = None
             st.rerun()
         
         if st.session_state.selected_field:
-            # Textbereich zur Eingabe
-            txt = st.text_area("Inhalt erfassen", placeholder="Hier den Text eingeben...", label_visibility="collapsed", key="host_text_eingabe")
+            # Zustand des Textbereichs sichern
+            txt = st.text_area("Inhalt erfassen", value=st.session_state["host_text_wert"], placeholder="Hier den Text eingeben...", label_visibility="collapsed", key="host_text_eingabe")
             
+            if txt != st.session_state["host_text_wert"]:
+                st.session_state["host_text_wert"] = txt
+
             if st.button("💾 In Excel-Zentralmatrix speichern", type="primary") and txt.strip():
                 execute_matrix_input_direct(st.session_state.selected_field, st.session_state.selected_object, txt.strip())
                 
-                # ISSUE 4 ERFÜLLT: Dynamischen Feedback-Text extrahieren
+                # Feedback-Text aus dem Excel-Lexikon ziehen
                 danke_text = "Vielen Dank für deine Information."
                 if df_usecases is not None:
                     uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == current_uc_clean]
                     if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]):
                         danke_text = str(uc_row.iloc[0][df_usecases.columns[5]]).strip()
                 
-                # In persistenten State schreiben, damit es nach dem Rerun sichtbar bleibt
+                # In persistenten State schreiben
                 st.session_state["erfolgsmeldung_anzeigen"] = danke_text
                 
-                # States aufräumen
-                st.session_state.selected_object = None
-                st.session_state.selected_field = None
+                # Textfeld leeren
+                st.session_state["host_text_wert"] = ""
                 st.rerun()
                 
     st.stop()
