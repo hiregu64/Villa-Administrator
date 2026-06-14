@@ -155,17 +155,16 @@ def execute_matrix_input_direct(physische_spalte, objekt, text):
         col_idx = find_column_by_fuzzy_name(headers, physische_spalte)
         if col_idx:
             old = ws.cell(row_idx, col_idx).value or ""
-            # Zeilenumbruch-Trennung für mehrere Berichte in einem Feld sicherstellen
             if old:
-                ws.cell(row_idx, col_idx).value = f"{str(old).strip()}\n[{datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | {st.session_state.aktive_rolle}]: {text}".strip()
+                ws.cell(row_idx, col_idx).value = f"{str(old).strip()}\n[{datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | {st.session_state.aktive_rolle} | aktiv]: {text}".strip()
             else:
-                ws.cell(row_idx, col_idx).value = f"[{datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | {st.session_state.aktive_rolle}]: {text}".strip()
+                ws.cell(row_idx, col_idx).value = f"[{datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | {st.session_state.aktive_rolle} | aktiv]: {text}".strip()
             
             ws.cell(row_idx, col_idx).alignment = Alignment(wrap_text=True)
             ws.cell(row_idx, col_idx).font = Font(color="1F4E78", bold=False)
             
             status_idx = find_column_by_fuzzy_name(headers, f"{physische_spalte} Status")
-            if status_idx: ws.cell(row_idx, status_idx).value = "offen"
+            if status_idx: ws.cell(row_idx, status_idx).value = "aktiv"
             
             out = io.BytesIO()
             wb.save(out)
@@ -335,17 +334,11 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
 
 
 # ==============================================================================
-# 📊 GENERISCHE & DYNAMISCHE USE CASE BERICHTSENGINE (ZEITRAUM-KORRELIERT)
+# 📊 GENERISCHE & DYNAMISCHE USE CASE BERICHTSENGINE (SCHLÜSSELWORT-FILTER)
 # ==============================================================================
 elif "bericht" in current_uc_clean:
-    report_options = []
-    if df_lexikon is not None and len(df_lexikon.columns) > 5:
-        report_col_name = df_lexikon.columns[5] # Spalte "Details Bericht"
-        report_options = df_lexikon[report_col_name].dropna().astype(str).str.strip().unique().tolist()
-        report_options = [opt for opt in report_options if opt.lower() not in ["ja", "nein", "", "nan"]]
-    
-    if not report_options:
-        report_options = ["Offene Störungen", "Behobene Störungen", "Offenes Feedback", "Wartung", "Wissenslücken"]
+    # 1. Dropdown-Optionen nach deiner Vorgabe sauber listen (ohne Klammerzusatz)
+    report_options = ["Offene Störungen", "Behobene Störungen", "Offenes Feedback", "Behobenes Feedback", "Offene Wissenslücken"]
 
     idx_report = report_options.index(st.session_state.selected_report_type) if st.session_state.selected_report_type in report_options else None
     selected_rep = st.selectbox(
@@ -389,20 +382,24 @@ elif "bericht" in current_uc_clean:
             else: delta_days = 365
             stichtag = heute - datetime.timedelta(days=delta_days)
 
-            # 1. Zugeordnete Datenspalten ermitteln
-            ziel_spalten = []
-            if df_lexikon is not None and len(df_lexikon.columns) > 5:
-                spalten_name_col = df_lexikon.columns[0]
-                details_bericht_col = df_lexikon.columns[5]
-                ziel_spalten = df_lexikon[df_lexikon[details_bericht_col].astype(str).str.strip().str.lower() == st.session_state.selected_report_type.lower()][spalten_name_col].dropna().astype(str).str.strip().tolist()
+            # 2. Festlegen, welches Schlüsselwort für den gewählten Bericht gesucht wird
+            target_keyword = None
+            if "offen" in st.session_state.selected_report_type.lower():
+                target_keyword = "aktiv"
+            elif "behoben" in st.session_state.selected_report_type.lower():
+                target_keyword = "ok"
 
-            if not ziel_spalten:
-                # Fallback intelligentes Matching über Text-Ähnlichkeit
-                clean_rep_type = st.session_state.selected_report_type.lower()
-                if "störung" in clean_rep_type: ziel_spalten = ["Störung / Defekt"]
-                elif "feedback" in clean_rep_type: ziel_spalten = ["Feedback Gast"]
-                elif "wartung" in clean_rep_type: ziel_spalten = ["Wartung Host"]
-                else: ziel_spalten = [c for c in df_wissen.columns if "status" not in c.lower() and c.lower() != "bezeichnung"]
+            # 3. Physische Spaltenzuordnung flexibel über Namen der Berichtsart
+            ziel_spalten = []
+            clean_rep_type = st.session_state.selected_report_type.lower()
+            if "störung" in clean_rep_type: 
+                ziel_spalten = ["Störung / Defekt"]
+            elif "feedback" in clean_rep_type: 
+                ziel_spalten = ["Feedback Gast"]
+            elif "wissen" in clean_rep_type: 
+                ziel_spalten = ["Keine Information"]
+            else: 
+                ziel_spalten = [c for c in df_wissen.columns if "status" not in c.lower() and c.lower() != "bezeichnung"]
 
             report_rows = []
             bez_col = df_wissen.columns[0] if df_wissen is not None else "Bezeichnung"
@@ -410,35 +407,24 @@ elif "bericht" in current_uc_clean:
             if df_wissen is not None:
                 for col in ziel_spalten:
                     if col in df_wissen.columns:
-                        # Status-Spalte prüfen (z.B. "Störung / Defekt Status")
-                        status_col_name = f"{col} Status"
-                        has_status_filter = status_col_name in df_wissen.columns
-                        
-                        # Bestimmen, welcher Status-Wert gesucht wird basierend auf dem Berichtsnamen
-                        target_status = None
-                        if "offen" in st.session_state.selected_report_type.lower(): target_status = "offen"
-                        elif "beheben" in st.session_state.selected_report_type.lower() or "behoben" in st.session_state.selected_report_type.lower(): target_status = "behoben"
-
                         for _, row in df_wissen.iterrows():
-                            # Wenn Status-Spalte existiert und Filter aktiv ist, abgleichen
-                            if has_status_filter and target_status:
-                                current_status = str(row[status_col_name]).strip().lower()
-                                if current_status != target_status:
-                                    continue # Überspringen, da Status nicht matcht
-
                             cell_val = str(row[col]).strip() if pd.notna(row[col]) else ""
                             if cell_val:
-                                # Da mehrere Berichte mit Zeilenumbruch (\n) getrennt gesammelt werden, splitten wir sie auf!
+                                # Zeilenbasiertes Splitting, da mehrere Meldungen in einer Zelle stehen
                                 lines = [l.strip() for l in cell_val.split("\n") if l.strip()]
                                 for line in lines:
-                                    # Jede Zeile analysieren und das Datum extrahieren
+                                    
+                                    # Filterung nach Schlüsselwort (aktiv oder OK) direkt in der Zeile
+                                    if target_keyword and target_keyword not in line.lower():
+                                        continue
+
                                     if line.startswith("[") and "]" in line:
                                         try:
                                             meta_part, text_part = line.split("]", 1)
                                             date_str = meta_part.replace("[", "").split("|")[0].strip()
                                             entry_date = datetime.datetime.strptime(date_str, "%d.%m.%Y %H:%M")
                                             
-                                            # Mit Zeitraum abgleichen
+                                            # Zeitraum-Abgleich
                                             if entry_date >= stichtag:
                                                 clean_info = text_part.strip().lstrip(":").strip()
                                                 report_rows.append({
@@ -447,14 +433,12 @@ elif "bericht" in current_uc_clean:
                                                     "Information": clean_info
                                                 })
                                         except:
-                                            # Fallback falls kein valides Datum geparst werden konnte
                                             report_rows.append({
                                                 "Objekt": str(row[bez_col]).strip(),
                                                 "Datum": "Historisch",
                                                 "Information": line
                                             })
                                     else:
-                                        # Zeile ohne Metadaten-Klammer
                                         report_rows.append({
                                             "Objekt": str(row[bez_col]).strip(),
                                             "Datum": "Historisch",
@@ -463,14 +447,11 @@ elif "bericht" in current_uc_clean:
 
             if report_rows:
                 df_report = pd.DataFrame(report_rows)
-                # Saubere chronologische Sortierung (neueste Einträge oben)
-                # Da Datum als String vorliegen kann, machen wir eine temporäre Datums-Sortierung
                 df_report["_sort_date"] = pd.to_datetime(df_report["Datum"], format="%d.%m.%Y", errors="coerce")
                 df_report = df_report.sort_values(by="_sort_date", ascending=False).drop(columns=["_sort_date"])
-                
                 st.dataframe(df_report, use_container_width=True, hide_index=True)
             else:
-                st.info("Keine Einträge für den ausgewählten Zeitraum und Status in der Matrix gefunden.")
+                st.info(f"Keine Einträge mit dem Status '{target_keyword}' für den ausgewählten Zeitraum in der Matrix gefunden.")
     st.stop()
 
 
