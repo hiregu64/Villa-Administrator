@@ -334,31 +334,40 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
 
 
 # ==============================================================================
-# 📊 GENERISCHE & DYNAMISCHE USE CASE BERICHTSENGINE (EXAKTER DYNAMISCHER LOOKUP)
+# 📊 GENERISCHE & DYNAMISCHE USE CASE BERICHTSENGINE (EXAKTER LEXIKON-ABGLEICH)
 # ==============================================================================
 elif "bericht" in current_uc_clean:
     report_options = []
-    mapping_dropdown_zu_excel = {} # "Offene Störungen" -> "Offene Störungen (aktiv)"
+    mapping_dropdown_zu_lexikon_zeile = {}
 
-    # 1. Alle verfügbaren Berichte dynamisch aus Spalten_Lexikon (Spalte 6) extrahieren
+    # 1. Dynamisches Auslesen basierend auf deinen 3 Kriterien im Spalten_Lexikon
     if df_lexikon is not None and len(df_lexikon.columns) > 5:
-        report_col_name = df_lexikon.columns[5] # Spalte "Details Bericht"
-        raw_options = df_lexikon[report_col_name].dropna().astype(str).str.strip().unique().tolist()
-        
-        for opt in raw_options:
-            if opt.lower() not in ["ja", "nein", "", "nan"]:
-                # Säuberung für das Dropdown im HMI (schneidet Klammer-Zusatz ab)
-                clean_opt = opt.split("(")[0].strip()
+        col_spaltenname = df_lexikon.columns[0]      # Spalte 1: Physischer Spaltenname
+        col_usecase = df_lexikon.columns[3]          # Spalte 4: Use Case
+        col_regel = df_lexikon.columns[4]            # Spalte 5: Erwartetes Format / Regel
+        col_details = df_lexikon.columns[5]          # Spalte 6: Detail Bericht
+
+        # Filtere alle Zeilen, in denen die Spalte "Use Case" exakt "Bericht" enthält
+        mask_bericht = df_lexikon[col_usecase].astype(str).str.strip().str.lower() == "bericht"
+        df_bericht_rows = df_lexikon[mask_bericht]
+
+        for _, row_lex in df_bericht_rows.iterrows():
+            raw_detail = str(row_lex[col_details]).strip()
+            if raw_detail and raw_detail.lower() != "nan":
+                # Bereinigter Name für das HMI Dropdown (schneidet Klammern ab falls vorhanden)
+                clean_opt = raw_detail.split("(")[0].strip()
                 if clean_opt and clean_opt not in report_options:
                     report_options.append(clean_opt)
-                    mapping_dropdown_zu_excel[clean_opt] = opt
+                    # Wir merken uns das komplette Zeilen-Mapping für den späteren Lookup
+                    mapping_dropdown_zu_lexikon_zeile[clean_opt] = {
+                        "spalte_wissen": str(row_lex[col_spaltenname]).strip(),
+                        "such_zustand": str(row_lex[col_regel]).strip().lower(),
+                        "original_detail": raw_detail
+                    }
 
-    # Fallback falls Lexikon nicht geladen wurde
+    # Fallback falls Matrix nicht erreichbar sein sollte
     if not report_options:
         report_options = ["Offene Störungen", "Behobene Störungen", "Offenes Feedback", "Behobenes Feedback", "Offene Wissenslücken"]
-        mapping_dropdown_zu_excel = {
-            "Offene Störungen": "Offene Störungen (aktiv)", "Behobene Störungen": "Behobene Störungen (OK)"
-        }
 
     idx_report = report_options.index(st.session_state.selected_report_type) if st.session_state.selected_report_type in report_options else None
     selected_rep = st.selectbox(
@@ -402,82 +411,53 @@ elif "bericht" in current_uc_clean:
             else: delta_days = 365
             stichtag = heute - datetime.timedelta(days=delta_days)
 
-            # 2. Ermittle das Filter-Schlüsselwort aus dem Original-Excel-Namen (z.B. "aktiv" oder "ok")
-            original_excel_name = mapping_dropdown_zu_excel.get(st.session_state.selected_report_type, st.session_state.selected_report_type)
-            target_keyword = None
-            if "(" in original_excel_name and ")" in original_excel_name:
-                target_keyword = original_excel_name.split("(")[1].split(")")[0].strip().lower()
-            
-            if not target_keyword:
-                if "offen" in st.session_state.selected_report_type.lower(): target_keyword = "aktiv"
-                elif "behoben" in st.session_state.selected_report_type.lower(): target_keyword = "ok"
-
-            # 3. 🎯 DYNAMISCHER COLUMN-LOOKUP AUS DEM USECASE_LEXIKON
-            # Wir holen exakt die physikalischen Spalten, die dem aktuellen Use Case zugewiesen sind!
-            ziel_spalten = []
-            if df_usecases is not None:
-                uc_col_idx = df_usecases.columns[0] # Erste Spalte ist die Use Case ID/Name
-                # Suchen nach der Zeile des aktiven Use Cases (z.B. "Bericht Host" oder "Meldungen")
-                uc_row = df_usecases[df_usecases[uc_col_idx].astype(str).str.strip().str.lower() == st.session_state.aktiver_use_case.strip().lower()]
-                
-                if not uc_row.empty and len(df_usecases.columns) > 4:
-                    spalten_string = str(uc_row.iloc[0][df_usecases.columns[4]]).strip() # Spalte 5 (Index 4) enthält die Kommaliste
-                    if spalten_string and spalten_string.lower() != "nan":
-                        # Aufsplitten nach Kommata und Whitespaces entfernen
-                        ziel_spalten = [s.strip() for s in spalten_string.split(",") if s.strip()]
-
-            # Fallback über Spalten_Lexikon falls im UseCase_Lexikon nichts gefunden wurde
-            if not ziel_spalten and df_lexikon is not None and len(df_lexikon.columns) > 5:
-                spalten_name_col = df_lexikon.columns[0]
-                details_bericht_col = df_lexikon.columns[5]
-                for _, row_lex in df_lexikon.iterrows():
-                    if original_excel_name.lower() == str(row_lex[details_bericht_col]).strip().lower():
-                        col_name = str(row_lex[spalten_name_col]).strip()
-                        if col_name and col_name not in ziel_spalten:
-                            ziel_spalten.append(col_name)
-
             report_rows = []
             bez_col = df_wissen.columns[0] if df_wissen is not None else "Bezeichnung"
 
-            if df_wissen is not None:
-                for col in ziel_spalten:
-                    if col in df_wissen.columns:
-                        for _, row in df_wissen.iterrows():
-                            cell_val = str(row[col]).strip() if pd.notna(row[col]) else ""
-                            if cell_val:
-                                # Zeilenbasiertes Splitting für die historischen Einträge innerhalb einer Zelle
-                                lines = [l.strip() for l in cell_val.split("\n") if l.strip()]
-                                for line in lines:
-                                    
-                                    # Filterung nach dem ausgelesenen Schlüsselwort (aktiv / ok) direkt im Text
-                                    if target_keyword and target_keyword not in line.lower():
+            # 2. Spezifische Daten-Spalte und Filter-Zustand direkt aus dem gemerkten Lexikon-Eintrag holen!
+            lexikon_meta = mapping_dropdown_zu_lexikon_zeile.get(st.session_state.selected_report_type)
+            
+            if lexikon_meta and df_wissen is not None:
+                ziel_spalte = lexikon_meta["spalte_wissen"]
+                target_keyword = lexikon_meta["such_zustand"]
+
+                if ziel_spalte in df_wissen.columns:
+                    for _, row in df_wissen.iterrows():
+                        cell_val = str(row[ziel_spalte]).strip() if pd.notna(row[ziel_spalte]) else ""
+                        if cell_val:
+                            # Zeilenbasiertes Splitting für historische Einträge innerhalb einer Zelle
+                            lines = [l.strip() for l in cell_val.split("\n") if l.strip()]
+                            for line in lines:
+                                
+                                # Filterung nach dem exakten Zustand (z.B. "offen", "aktiv", "ok") direkt im Log-Text
+                                if target_keyword and target_keyword not in line.lower():
                                         continue
 
-                                    if line.startswith("[") and "]" in line:
-                                        try:
-                                            meta_part, text_part = line.split("]", 1)
-                                            date_str = meta_part.replace("[", "").split("|")[0].strip()
-                                            entry_date = datetime.datetime.strptime(date_str, "%d.%m.%Y %H:%M")
-                                            
-                                            if entry_date >= stichtag:
-                                                clean_info = text_part.strip().lstrip(":").strip()
-                                                report_rows.append({
-                                                    "Objekt": str(row[bez_col]).strip(),
-                                                    "Datum": entry_date.strftime("%d.%m.%Y"),
-                                                    "Information": clean_info
-                                                })
-                                        except:
+                                if line.startswith("[") and "]" in line:
+                                    try:
+                                        meta_part, text_part = line.split("]", 1)
+                                        date_str = meta_part.replace("[", "").split("|")[0].strip()
+                                        entry_date = datetime.datetime.strptime(date_str, "%d.%m.%Y %H:%M")
+                                        
+                                        if entry_date >= stichtag:
+                                            clean_info = text_part.strip().lstrip(":").strip()
                                             report_rows.append({
                                                 "Objekt": str(row[bez_col]).strip(),
-                                                "Datum": "Historisch",
-                                                "Information": line
+                                                "Datum": entry_date.strftime("%d.%m.%Y"),
+                                                "Information": clean_info
                                             })
-                                    else:
+                                    except:
                                         report_rows.append({
                                             "Objekt": str(row[bez_col]).strip(),
                                             "Datum": "Historisch",
                                             "Information": line
                                         })
+                                else:
+                                    report_rows.append({
+                                        "Objekt": str(row[bez_col]).strip(),
+                                        "Datum": "Historisch",
+                                        "Information": line
+                                    })
 
             if report_rows:
                 df_report = pd.DataFrame(report_rows)
@@ -485,7 +465,7 @@ elif "bericht" in current_uc_clean:
                 df_report = df_report.sort_values(by="_sort_date", ascending=False).drop(columns=["_sort_date"])
                 st.dataframe(df_report, use_container_width=True, hide_index=True)
             else:
-                st.info(f"Keine Einträge für '{st.session_state.selected_report_type}' mit Status '{target_keyword}' im gewählten Zeitraum gefunden.")
+                st.info(f"Keine Einträge für '{st.session_state.selected_report_type}' im gewählten Zeitraum in der Matrix gefunden.")
     st.stop()
 
 
