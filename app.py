@@ -203,6 +203,7 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
                 st.rerun()
     st.stop()
 
+# USE CASE BUTTONS GENERIEREN
 if df_usecases is not None:
     uc_col, hmi_col = df_usecases.columns[0], df_usecases.columns[2]
     allowed = [uc for uc in df_usecases[df_usecases[hmi_col].astype(str).str.lower().str.strip() == "ja"][uc_col].tolist() if st.session_state.aktive_rolle == "Host" or any(x in uc.lower() for x in ["hilfe", "störung", "feedback"])]
@@ -219,21 +220,9 @@ if df_usecases is not None:
 
 if not st.session_state.aktiver_use_case: st.stop()
 
-uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == st.session_state.aktiver_use_case.lower().strip()]
-richtung = str(uc_row.iloc[0][df_usecases.columns[1]]).strip().upper() if not uc_row.empty else "OUTPUT"
-fragetext = str(uc_row.iloc[0][df_usecases.columns[4]]).strip() if not uc_row.empty and len(df_usecases.columns) > 4 and pd.notna(uc_row.iloc[0][df_usecases.columns[4]]) else "Wie kann ich helfen?"
-danke_tmpl = str(uc_row.iloc[0][df_usecases.columns[5]]).strip() if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]) else "Danke!"
-
-# Helper zum Laden der Listen für die Standard-Tabs
-bez_col, kat_col = df_wissen.columns[0], ("Wo?" if "Wo?" in df_wissen.columns else df_wissen.columns[1])
-def get_liste(pattern):
-    mask = df_wissen[kat_col].astype(str).str.contains(pattern, case=False, na=False)
-    if st.session_state.aktive_rolle == "Gast" and "Relevanz Gast" in df_wissen.columns:
-        mask = mask & (df_wissen["Relevanz Gast"].astype(str).str.strip().str.lower() == "x")
-    return sorted(df_wissen[mask][bez_col].dropna().drop_duplicates().astype(str).str.strip().tolist())
 
 # ==============================================================================
-# 🎯 PRIORISIERTE SEKTION FÜR "NEUE INFORMATION" (DURCHBRICHT DIE TEXT-SCHLEIFE)
+# 🎯 SUPERSCHUTZ-WEICHE: SOFORTIGE EXKLUSIVE ISOLATION FÜR "NEUE INFORMATION"
 # ==============================================================================
 if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.aktive_rolle == "Host":
     st.subheader("📝 Neue Information erfassen")
@@ -276,11 +265,19 @@ if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.
                 st.session_state.selected_object = None
                 st.session_state.selected_field = None
                 st.rerun()
-    st.stop() # HIERMIT WIRD VERHINDERT, DASS DER TEXT AUS DEM LEXIKON IN DEN CHAT GERÄT
+                
+    st.stop() # ABSOLUTER STOPP: Das Skript bricht hier ab und liest das Lexikon-Textfeld gar nicht erst aus!
+
 
 # ==============================================================================
-# SPEZIAL-MODE: SYSTEM-BERICHTE
+# HIER FOLGT DIE STANDARD-LOGIK (NUR ERREICHBAR FÜR ANDERE USE CASES)
 # ==============================================================================
+uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == st.session_state.aktiver_use_case.lower().strip()]
+richtung = str(uc_row.iloc[0][df_usecases.columns[1]]).strip().upper() if not uc_row.empty else "OUTPUT"
+fragetext = str(uc_row.iloc[0][df_usecases.columns[4]]).strip() if not uc_row.empty and len(df_usecases.columns) > 4 and pd.notna(uc_row.iloc[0][df_usecases.columns[4]]) else "Wie kann ich helfen?"
+danke_tmpl = str(uc_row.iloc[0][df_usecases.columns[5]]).strip() if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]) else "Danke!"
+
+# SPEZIAL-MODE: SYSTEM-BERICHTE
 if "bericht" in st.session_state.aktiver_use_case.lower():
     typ = st.selectbox("Typ", ["Offene Störungen", "Behobene Störungen", "Offenes Feedback", "Offene Wissenslücken", "Gesamtübersicht"], index=None, placeholder="Berichtsart wählen...")
     if typ and st.button("📊 Bericht generieren", type="primary", use_container_width=True):
@@ -291,60 +288,65 @@ if "bericht" in st.session_state.aktiver_use_case.lower():
         st.markdown(call_gemini(f"Strukturiere das chronologisch:\n\n" + "\n".join(lines), structured=False) if lines else "Keine Einträge.")
     st.stop()
 
-# ==============================================================================
-# STANDARD-ANSICHT (UNBERÜHRT FÜR ALLE ANDEREN USE CASES MIT TABS)
-# ==============================================================================
-else:
-    tab_innen, tab_aussen, tab_naehe = st.tabs(["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"])
+# Helper zum Laden der Listen für die Standard-Tabs
+bez_col, kat_col = df_wissen.columns[0], ("Wo?" if "Wo?" in df_wissen.columns else df_wissen.columns[1])
+def get_liste(pattern):
+    mask = df_wissen[kat_col].astype(str).str.contains(pattern, case=False, na=False)
+    if st.session_state.aktive_rolle == "Gast" and "Relevanz Gast" in df_wissen.columns:
+        mask = mask & (df_wissen["Relevanz Gast"].astype(str).str.strip().str.lower() == "x")
+    return sorted(df_wissen[mask][bez_col].dropna().drop_duplicates().astype(str).str.strip().tolist())
 
-    with tab_innen:
-        val_innen = st.selectbox("Ausstattung innen:", options=["Bitte wähle das Objekt aus."] + get_liste("innen"), key="g_innen", label_visibility="collapsed")
-    with tab_aussen:
-        val_aussen = st.selectbox("Ausstattung außen:", options=["Bitte wähle das Objekt aus."] + get_liste("außen|aussen"), key="g_aussen", label_visibility="collapsed")
-    with tab_naehe:
-        val_naehe = st.selectbox("In der Nähe:", options=["Bitte wähle das Objekt aus."] + get_liste("nähe|naehe"), key="g_naehe", label_visibility="collapsed")
+# STANDARD-ANSICHT (UNBERÜHRT FÜR CHAT/INPUTS/OUTPUTS MIT TABS)
+tab_innen, tab_aussen, tab_naehe = st.tabs(["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"])
 
-    aktuell_gewaehlt = None
-    if val_innen != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_innen
-    elif val_aussen != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_aussen
-    elif val_naehe != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_naehe
+with tab_innen:
+    val_innen = st.selectbox("Ausstattung innen:", options=["Bitte wähle das Objekt aus."] + get_liste("innen"), key="g_innen", label_visibility="collapsed")
+with tab_aussen:
+    val_aussen = st.selectbox("Ausstattung außen:", options=["Bitte wähle das Objekt aus."] + get_liste("außen|aussen"), key="g_aussen", label_visibility="collapsed")
+with tab_naehe:
+    val_naehe = st.selectbox("In der Nähe:", options=["Bitte wähle das Objekt aus."] + get_liste("nähe|naehe"), key="g_naehe", label_visibility="collapsed")
 
-    if aktuell_gewaehlt and aktuell_gewaehlt != st.session_state.selected_object:
-        st.session_state.selected_object = aktuell_gewaehlt
-        st.session_state.messages = []
+aktuell_gewaehlt = None
+if val_innen != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_innen
+elif val_aussen != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_aussen
+elif val_naehe != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_naehe
+
+if aktuell_gewaehlt and aktuell_gewaehlt != st.session_state.selected_object:
+    st.session_state.selected_object = aktuell_gewaehlt
+    st.session_state.messages = []
+    st.rerun()
+
+if not st.session_state.selected_object: 
+    st.stop()
+
+# Chat / Dialog-Führung
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]): st.markdown(msg["content"])
+    
+if user_input := st.chat_input(fragetext):
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    st.rerun()
+    
+if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+    u_text = st.session_state.messages[-1]["content"]
+    is_not_found = "nicht gefunden" in st.session_state.selected_object.lower()
+    
+    if richtung == "OUTPUT":
+        if is_not_found:
+            st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
+            execute_matrix_input("Keine Information", st.session_state.selected_object, u_text)
+        else:
+            with st.spinner("Prüfe Daten..."):
+                res = call_gemini(u_text, extract_context_for_object(st.session_state.selected_object))
+                if res.wissensluecke_erkannt or not res.antwort_text or any(p in res.antwort_text.lower() for p in ["keine information", "weiß ich nicht", "leider nein"]):
+                    st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
+                    execute_matrix_input("Keine Information", st.session_state.selected_object, u_text)
+                else:
+                    st.session_state.messages.append({"role": "assistant", "content": res.antwort_text})
         st.rerun()
-
-    if not st.session_state.selected_object: 
-        st.stop()
-
-    # Chat / Dialog-Führung
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]): st.markdown(msg["content"])
         
-    if user_input := st.chat_input(fragetext):
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        st.rerun()
-        
-    if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-        u_text = st.session_state.messages[-1]["content"]
-        is_not_found = "nicht gefunden" in st.session_state.selected_object.lower()
-        
-        if richtung == "OUTPUT":
-            if is_not_found:
-                st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
-                execute_matrix_input("Keine Information", st.session_state.selected_object, u_text)
-            else:
-                with st.spinner("Prüfe Daten..."):
-                    res = call_gemini(u_text, extract_context_for_object(st.session_state.selected_object))
-                    if res.wissensluecke_erkannt or not res.antwort_text or any(p in res.antwort_text.lower() for p in ["keine information", "weiß ich nicht", "leider nein"]):
-                        st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
-                        execute_matrix_input("Keine Information", st.session_state.selected_object, u_text)
-                    else:
-                        st.session_state.messages.append({"role": "assistant", "content": res.antwort_text})
+    elif richtung == "INPUT":
+        with st.spinner("Protokolliere in Matrix..."):
+            execute_matrix_input(st.session_state.aktiver_use_case, st.session_state.selected_object, u_text)
+            st.session_state.messages.append({"role": "assistant", "content": danke_tmpl.replace("{use_case}", st.session_state.aktiver_use_case)})
             st.rerun()
-            
-        elif richtung == "INPUT":
-            with st.spinner("Protokolliere in Matrix..."):
-                execute_matrix_input(st.session_state.aktiver_use_case, st.session_state.selected_object, u_text)
-                st.session_state.messages.append({"role": "assistant", "content": danke_tmpl.replace("{use_case}", st.session_state.aktiver_use_case)})
-                st.rerun()
