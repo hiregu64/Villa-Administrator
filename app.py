@@ -155,10 +155,13 @@ def execute_matrix_input_direct(physische_spalte, objekt, text):
         col_idx = find_column_by_fuzzy_name(headers, physische_spalte)
         if col_idx:
             old = ws.cell(row_idx, col_idx).value or ""
-            ws.cell(row_idx, col_idx).value = f"{old}\n[{datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | {st.session_state.aktive_rolle}]: {text}".strip()
-            ws.cell(row_idx, col_idx).alignment = Alignment(wrap_text=True)
+            # Zeilenumbruch-Trennung für mehrere Berichte in einem Feld sicherstellen
+            if old:
+                ws.cell(row_idx, col_idx).value = f"{str(old).strip()}\n[{datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | {st.session_state.aktive_rolle}]: {text}".strip()
+            else:
+                ws.cell(row_idx, col_idx).value = f"[{datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | {st.session_state.aktive_rolle}]: {text}".strip()
             
-            # Textfarbe in Excel wird auf das geforderte Blau (#1F4E78) formatiert
+            ws.cell(row_idx, col_idx).alignment = Alignment(wrap_text=True)
             ws.cell(row_idx, col_idx).font = Font(color="1F4E78", bold=False)
             
             status_idx = find_column_by_fuzzy_name(headers, f"{physische_spalte} Status")
@@ -241,16 +244,13 @@ current_uc_clean = str(st.session_state.aktiver_use_case).strip().lower()
 
 if "information" in current_uc_clean and "keine" not in current_uc_clean and "bericht" not in current_uc_clean and str(st.session_state.aktive_rolle).strip().lower() == "host":
     
-    # Weiche für Tab-Listen-Generierung aus der Wissensbasis
     bez_col, kat_col = df_wissen.columns[0], ("Wo?" if "Wo?" in df_wissen.columns else df_wissen.columns[1])
     def get_liste_host(pattern):
         mask = df_wissen[kat_col].astype(str).str.contains(pattern, case=False, na=False)
         return sorted(df_wissen[mask][bez_col].dropna().drop_duplicates().astype(str).str.strip().tolist())
 
-    # Einstieg direkt über die Tabs ohne falsche Überschrift
     tab_innen, tab_aussen, tab_naehe = st.tabs(["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"])
 
-    # Ermittlung des aktuell im Session State hinterlegten Objekts
     current_obj = st.session_state.selected_object
     
     with tab_innen:
@@ -266,7 +266,6 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
         idx_naehe = options_naehe.index(current_obj) if current_obj in options_naehe else None
         val_naehe = st.selectbox("In der Nähe", options=options_naehe, index=idx_naehe, placeholder="Bitte wähle das Objekt aus", key="h_naehe", label_visibility="collapsed")
 
-    # Auswertung welcher Tab bedient wurde
     if val_innen and val_innen != st.session_state.selected_object:
         st.session_state.selected_object = val_innen
         st.session_state.selected_field = None
@@ -284,8 +283,6 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
         st.rerun()
 
     if st.session_state.selected_object:
-        
-        # Filterung aller administrativen Felder gemäß Spalten_Lexikon
         if df_lexikon is not None:
             lexikon_spalten = df_lexikon[df_lexikon.columns[0]].dropna().astype(str).str.strip().tolist()
             options_spalten = [
@@ -338,20 +335,18 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
 
 
 # ==============================================================================
-# 📊 GENERISCHE & DYNAMISCHE USE CASE BERICHTSENGINE
+# 📊 GENERISCHE & DYNAMISCHE USE CASE BERICHTSENGINE (ZEITRAUM-KORRELIERT)
 # ==============================================================================
 elif "bericht" in current_uc_clean:
-    # 1. Berichtstypen dynamisch aus Spalten_Lexikon (Spalte 5 / Index 5) extrahieren
     report_options = []
     if df_lexikon is not None and len(df_lexikon.columns) > 5:
-        report_col_name = df_lexikon.columns[5] # "Details Bericht"
+        report_col_name = df_lexikon.columns[5] # Spalte "Details Bericht"
         report_options = df_lexikon[report_col_name].dropna().astype(str).str.strip().unique().tolist()
         report_options = [opt for opt in report_options if opt.lower() not in ["ja", "nein", "", "nan"]]
     
     if not report_options:
-        report_options = ["Störung", "Feedback", "Wartung", "Keine Information"]
+        report_options = ["Offene Störungen", "Behobene Störungen", "Offenes Feedback", "Wartung", "Wissenslücken"]
 
-    # Erster Dropdown: Berichtsart (Ohne Label, mit exakter Lexikon-Scroll-Abfrage)
     idx_report = report_options.index(st.session_state.selected_report_type) if st.session_state.selected_report_type in report_options else None
     selected_rep = st.selectbox(
         "Berichtsart",
@@ -366,7 +361,6 @@ elif "bericht" in current_uc_clean:
         st.session_state.selected_report_type = selected_rep
         st.rerun()
 
-    # Zweiter Dropdown: Zeitraum (Direkt darunter, mit exakter Lexikon-Scroll-Abfrage)
     if st.session_state.selected_report_type:
         timeframe_options = ["1 Woche", "1 Monat", "3 Monate", "1 Jahr"]
         idx_timeframe = timeframe_options.index(st.session_state.selected_report_timeframe) if st.session_state.selected_report_timeframe in timeframe_options else None
@@ -384,22 +378,18 @@ elif "bericht" in current_uc_clean:
             st.session_state.selected_report_timeframe = selected_tf
             st.rerun()
 
-        # Wenn beide Parameter gewählt sind, generieren wir den Live-Bericht aus der Excel-Matrix
         if st.session_state.selected_report_timeframe:
             st.markdown(f"### 📋 {st.session_state.selected_report_type} ({st.session_state.selected_report_timeframe})")
             
+            # Zeitfenster berechnen
             heute = datetime.datetime.now()
-            if st.session_state.selected_report_timeframe == "1 Woche":
-                delta_days = 7
-            elif st.session_state.selected_report_timeframe == "1 Monat":
-                delta_days = 30
-            elif st.session_state.selected_report_timeframe == "3 Monate":
-                delta_days = 90
-            else:
-                delta_days = 365
+            if st.session_state.selected_report_timeframe == "1 Woche": delta_days = 7
+            elif st.session_state.selected_report_timeframe == "1 Monat": delta_days = 30
+            elif st.session_state.selected_report_timeframe == "3 Monate": delta_days = 90
+            else: delta_days = 365
             stichtag = heute - datetime.timedelta(days=delta_days)
 
-            # Passende physische Spalten aus Excel ermitteln, die dieser Berichtsart zugeordnet sind
+            # 1. Zugeordnete Datenspalten ermitteln
             ziel_spalten = []
             if df_lexikon is not None and len(df_lexikon.columns) > 5:
                 spalten_name_col = df_lexikon.columns[0]
@@ -407,7 +397,12 @@ elif "bericht" in current_uc_clean:
                 ziel_spalten = df_lexikon[df_lexikon[details_bericht_col].astype(str).str.strip().str.lower() == st.session_state.selected_report_type.lower()][spalten_name_col].dropna().astype(str).str.strip().tolist()
 
             if not ziel_spalten:
-                ziel_spalten = [c for c in df_wissen.columns if st.session_state.selected_report_type.lower() in c.lower()]
+                # Fallback intelligentes Matching über Text-Ähnlichkeit
+                clean_rep_type = st.session_state.selected_report_type.lower()
+                if "störung" in clean_rep_type: ziel_spalten = ["Störung / Defekt"]
+                elif "feedback" in clean_rep_type: ziel_spalten = ["Feedback Gast"]
+                elif "wartung" in clean_rep_type: ziel_spalten = ["Wartung Host"]
+                else: ziel_spalten = [c for c in df_wissen.columns if "status" not in c.lower() and c.lower() != "bezeichnung"]
 
             report_rows = []
             bez_col = df_wissen.columns[0] if df_wissen is not None else "Bezeichnung"
@@ -415,35 +410,67 @@ elif "bericht" in current_uc_clean:
             if df_wissen is not None:
                 for col in ziel_spalten:
                     if col in df_wissen.columns:
+                        # Status-Spalte prüfen (z.B. "Störung / Defekt Status")
+                        status_col_name = f"{col} Status"
+                        has_status_filter = status_col_name in df_wissen.columns
+                        
+                        # Bestimmen, welcher Status-Wert gesucht wird basierend auf dem Berichtsnamen
+                        target_status = None
+                        if "offen" in st.session_state.selected_report_type.lower(): target_status = "offen"
+                        elif "beheben" in st.session_state.selected_report_type.lower() or "behoben" in st.session_state.selected_report_type.lower(): target_status = "behoben"
+
                         for _, row in df_wissen.iterrows():
+                            # Wenn Status-Spalte existiert und Filter aktiv ist, abgleichen
+                            if has_status_filter and target_status:
+                                current_status = str(row[status_col_name]).strip().lower()
+                                if current_status != target_status:
+                                    continue # Überspringen, da Status nicht matcht
+
                             cell_val = str(row[col]).strip() if pd.notna(row[col]) else ""
                             if cell_val:
-                                lines = cell_val.split("\n")
+                                # Da mehrere Berichte mit Zeilenumbruch (\n) getrennt gesammelt werden, splitten wir sie auf!
+                                lines = [l.strip() for l in cell_val.split("\n") if l.strip()]
                                 for line in lines:
+                                    # Jede Zeile analysieren und das Datum extrahieren
                                     if line.startswith("[") and "]" in line:
                                         try:
-                                            date_str = line.split("]")[0].replace("[", "").split("|")[0].strip()
+                                            meta_part, text_part = line.split("]", 1)
+                                            date_str = meta_part.replace("[", "").split("|")[0].strip()
                                             entry_date = datetime.datetime.strptime(date_str, "%d.%m.%Y %H:%M")
+                                            
+                                            # Mit Zeitraum abgleichen
                                             if entry_date >= stichtag:
-                                                clean_info = line.split("]:", 1)[1].strip() if "]:" in line else line
+                                                clean_info = text_part.strip().lstrip(":").strip()
                                                 report_rows.append({
-                                                    "Objekt": row[bez_col],
+                                                    "Objekt": str(row[bez_col]).strip(),
                                                     "Datum": entry_date.strftime("%d.%m.%Y"),
-                                                    "Information": f"[{st.session_state.selected_report_type}] {clean_info}"
+                                                    "Information": clean_info
                                                 })
                                         except:
+                                            # Fallback falls kein valides Datum geparst werden konnte
                                             report_rows.append({
-                                                "Objekt": row[bez_col],
-                                                "Datum": "Unbekannt",
-                                                "Information": f"[{st.session_state.selected_report_type}] {line}"
+                                                "Objekt": str(row[bez_col]).strip(),
+                                                "Datum": "Historisch",
+                                                "Information": line
                                             })
+                                    else:
+                                        # Zeile ohne Metadaten-Klammer
+                                        report_rows.append({
+                                            "Objekt": str(row[bez_col]).strip(),
+                                            "Datum": "Historisch",
+                                            "Information": line
+                                        })
 
             if report_rows:
                 df_report = pd.DataFrame(report_rows)
-                df_report = df_report.sort_values(by="Datum", ascending=False)
+                # Saubere chronologische Sortierung (neueste Einträge oben)
+                # Da Datum als String vorliegen kann, machen wir eine temporäre Datums-Sortierung
+                df_report["_sort_date"] = pd.to_datetime(df_report["Datum"], format="%d.%m.%Y", errors="coerce")
+                df_report = df_report.sort_values(by="_sort_date", ascending=False).drop(columns=["_sort_date"])
+                
                 st.dataframe(df_report, use_container_width=True, hide_index=True)
             else:
-                st.info("Keine Einträge für den ausgewählten Zeitraum in der Matrix gefunden.")
+                st.info("Keine Einträge für den ausgewählten Zeitraum und Status in der Matrix gefunden.")
     st.stop()
 
 
@@ -456,7 +483,6 @@ else:
     fragetext = str(uc_row.iloc[0][df_usecases.columns[4]]).strip() if not uc_row.empty and len(df_usecases.columns) > 4 and pd.notna(uc_row.iloc[0][df_usecases.columns[4]]) else "Wie kann ich helfen?"
     danke_tmpl = str(uc_row.iloc[0][df_usecases.columns[5]]).strip() if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]) else "Danke!"
 
-    # Tabs laden
     bez_col, kat_col = df_wissen.columns[0], ("Wo?" if "Wo?" in df_wissen.columns else df_wissen.columns[1])
     def get_liste(pattern):
         mask = df_wissen[kat_col].astype(str).str.contains(pattern, case=False, na=False)
@@ -486,7 +512,6 @@ else:
     if not st.session_state.selected_object: 
         st.stop()
 
-    # Chatführung
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]): st.markdown(msg["content"])
         
