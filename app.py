@@ -78,7 +78,7 @@ def fetch_matrix_from_drive():
         return False
 
 if st.session_state.matrix_data is None:
-    with st.spinner("Initialisiere Matrix-Daten..."):
+    with st.spinner("Initialisiere geschützte Matrix-Daten..."):
         fetch_matrix_from_drive()
 
 df_wissen = st.session_state.matrix_data["wissen"] if st.session_state.matrix_data else None
@@ -292,7 +292,7 @@ if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.
     st.stop()
 
 # ==============================================================================
-# STANDARD-ANSICHT (UNBERÜHRT FÜR ALLE ANDEREN USE CASES)
+# STANDARD-ANSICHT (UNBERÜHRT FÜR ALLE ANDEREN USE CASES MIT TABS)
 # ==============================================================================
 else:
     tab_innen, tab_aussen, tab_naehe = st.tabs(["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"])
