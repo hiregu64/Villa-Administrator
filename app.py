@@ -226,47 +226,80 @@ if not st.session_state.aktiver_use_case: st.stop()
 # ==============================================================================
 current_uc_clean = str(st.session_state.aktiver_use_case).strip().lower()
 
-# Die Bedingung schließt "keine" jetzt explizit aus, damit der Fallback ungestört bleibt!
 if "information" in current_uc_clean and "keine" not in current_uc_clean and "bericht" not in current_uc_clean and str(st.session_state.aktive_rolle).strip().lower() == "host":
     st.subheader("📝 Information erfassen")
     
-    # 1. Drop-down: Objekt-Auswahl
-    alle_objekte = sorted(df_wissen[df_wissen.columns[0]].dropna().drop_duplicates().astype(str).str.strip().tolist())
-    o_auswahl = st.selectbox(
-        "Bitte wähle das Objekt aus",
-        options=["Bitte wähle das Objekt aus"] + alle_objekte,
-        key="dropdown_neue_info_objekt"
-    )
-    
-    if o_auswahl != "Bitte wähle das Objekt aus":
-        st.session_state.selected_object = o_auswahl
+    # Weiche für Tab-Listen-Generierung aus der Wissensbasis
+    bez_col, kat_col = df_wissen.columns[0], ("Wo?" if "Wo?" in df_wissen.columns else df_wissen.columns[1])
+    def get_liste_host(pattern):
+        mask = df_wissen[kat_col].astype(str).str.contains(pattern, case=False, na=False)
+        return sorted(df_wissen[mask][bez_col].dropna().drop_duplicates().astype(str).str.strip().tolist())
+
+    # Nahtlose Integration des bekannten Tab-HMI für die Objektauswahl
+    st.write("### 1. Objekt auswählen")
+    tab_innen, tab_aussen, tab_naehe = st.tabs(["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"])
+
+    with tab_innen:
+        val_innen = st.selectbox("Ausstattung innen:", options=["Bitte Objekt wählen..."] + get_liste_host("innen"), key="h_innen", label_visibility="collapsed")
+    with tab_aussen:
+        val_aussen = st.selectbox("Ausstattung außen:", options=["Bitte Objekt wählen..."] + get_liste_host("außen|aussen"), key="h_aussen", label_visibility="collapsed")
+    with tab_naehe:
+        val_naehe = st.selectbox("In der Nähe:", options=["Bitte Objekt wählen..."] + get_liste_host("nähe|naehe"), key="h_naehe", label_visibility="collapsed")
+
+    # Auswertung, welches Objekt in den Tabs angeklickt wurde
+    aktuell_gewaehlt = None
+    if val_innen != "Bitte Objekt wählen...": aktuell_gewaehlt = val_innen
+    elif val_aussen != "Bitte Objekt wählen...": aktuell_gewaehlt = val_aussen
+    elif val_naehe != "Bitte Objekt wählen...": aktuell_gewaehlt = val_naehe
+
+    if aktuell_gewaehlt and aktuell_gewaehlt != st.session_state.selected_object:
+        st.session_state.selected_object = aktuell_gewaehlt
+        st.session_state.selected_field = None # Spaltenauswahl bei Objektwechsel resetten
+        st.rerun()
+
+    # Wenn ein Objekt gewählt wurde, geht es weiter
+    if st.session_state.selected_object:
+        st.info(f"Ausgewähltes Objekt: **{st.session_state.selected_object}**")
         
-        # 2. Drop-down: Spalten-Auswahl
-        options_spalten = [
-            c for c in df_wissen.columns 
-            if c.lower() not in ["bezeichnung", "wo?", "id", "kategorie", "relevanz gast"] 
-            and not c.lower().endswith("status")
-        ]
+        st.write("### 2. Art der Information auswählen")
         
+        # Rigoroser Filter: Wir holen alle Zeilen aus Spalte 1 des Spalten_Lexikons, 
+        # schmeißen die administrativen Felder strikt heraus und starten exakt ab "Marke/ Typ"
+        if df_lexikon is not None:
+            lexikon_spalten = df_lexikon[df_lexikon.columns[0]].dropna().astype(str).str.strip().tolist()
+            options_spalten = [
+                col for col in lexikon_spalten 
+                if col.lower() not in ["spaltenname", "bezeichnung", "wo?", "relevanz gast", "system"]
+                and not col.lower().endswith("status")
+            ]
+        else:
+            # Fallback falls df_lexikon nicht bereitsteht
+            options_spalten = [c for c in df_wissen.columns if c.lower() not in ["bezeichnung", "wo?", "id", "kategorie", "relevanz gast", "system"] and not c.lower().endswith("status")]
+
         s_auswahl = st.selectbox(
-            "Bitte wähle die Art der Information aus",
-            options=["Bitte wähle die Art der Information aus"] + options_spalten,
-            key="dropdown_neue_info_spalte"
+            "Wähle das Zielfeld für die Excel-Matrix:",
+            options=["-- Bitte Spalte auswählen --"] + options_spalten, # Ohne Sortierung, um Excel-Reihenfolge (Marke/Typ -> Besonderheit...) beizubehalten
+            key="dropdown_neue_info_spalte",
+            label_visibility="collapsed"
         )
         
-        if s_auswahl != "Bitte wähle die Art der Information aus":
+        if s_auswahl != "-- Bitte Spalte auswählen --":
             st.session_state.selected_field = s_auswahl
             
-            # 3. Inhalt erfassen
-            txt = st.text_area(f"Inhalt für '{st.session_state.selected_object}' in XLS-Spalte '{st.session_state.selected_field}':")
+            # 3. Inhalt erfassen und abspeichern
+            st.write("### 3. Inhalt eingeben")
+            txt = st.text_area(f"Neuer Eintrag für '{st.session_state.selected_object}' in das Feld '{st.session_state.selected_field}':", placeholder="Hier den Text eingeben...")
+            
             if st.button("💾 In Excel-Zentralmatrix speichern", type="primary") and txt.strip():
                 execute_matrix_input_direct(st.session_state.selected_field, st.session_state.selected_object, txt.strip())
                 st.success("Erfolgreich in Excel-Zentralmatrix gespeichert!")
+                
+                # State aufräumen für den nächsten Durchlauf
                 st.session_state.selected_object = None
                 st.session_state.selected_field = None
                 st.rerun()
                 
-    st.stop() # HIERMIT WIRD DER WEITERE DURCHLAUF STRUKTURELL VERHINDERT
+    st.stop() # Absoluter Schutz vor dem Standard-Zweig
 
 
 # ==============================================================================
