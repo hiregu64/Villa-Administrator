@@ -156,15 +156,15 @@ def execute_matrix_input_direct(physische_spalte, objekt, text):
         if col_idx:
             old = ws.cell(row_idx, col_idx).value or ""
             if old:
-                ws.cell(row_idx, col_idx).value = f"{str(old).strip()}\n[{datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | {st.session_state.aktive_rolle} | aktiv]: {text}".strip()
+                ws.cell(row_idx, col_idx).value = f"{str(old).strip()}\n[{datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | {st.session_state.aktive_rolle} | offen]: {text}".strip()
             else:
-                ws.cell(row_idx, col_idx).value = f"[{datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | {st.session_state.aktive_rolle} | aktiv]: {text}".strip()
+                ws.cell(row_idx, col_idx).value = f"[{datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | {st.session_state.aktive_rolle} | offen]: {text}".strip()
             
             ws.cell(row_idx, col_idx).alignment = Alignment(wrap_text=True)
             ws.cell(row_idx, col_idx).font = Font(color="1F4E78", bold=False)
             
             status_idx = find_column_by_fuzzy_name(headers, f"{physische_spalte} Status")
-            if status_idx: ws.cell(row_idx, status_idx).value = "aktiv"
+            if status_idx: ws.cell(row_idx, status_idx).value = "offen"
             
             out = io.BytesIO()
             wb.save(out)
@@ -361,7 +361,7 @@ elif "bericht" in current_uc_clean:
                         "original_detail": raw_detail
                     }
 
-    # Absolute Fallsicherung mit exakt DEINEN 10 Bezeichnungen aus der Excel-Struktur
+    # Absolute Fallsicherung mit exakt DEINEN Bezeichnungen
     if not report_options:
         report_options = [
             "Offene Störungen", "Behobene Störungen", 
@@ -416,7 +416,6 @@ elif "bericht" in current_uc_clean:
 
             lexikon_meta = mapping_dropdown_zu_lexikon_zeile.get(st.session_state.selected_report_type)
             
-            # Dynamischer Fallback-Filter falls kein Excel-Zeilen-Mapping da ist
             ziel_spalte = None
             target_keyword = None
             
@@ -424,7 +423,6 @@ elif "bericht" in current_uc_clean:
                 ziel_spalte = lexikon_meta["spalte_wissen"]
                 target_keyword = lexikon_meta["such_zustand"]
             else:
-                # Textbasiertes Fallback-Mapping direkt anhand deiner Vorgabe
                 rep_lower = st.session_state.selected_report_type.lower()
                 if "störung" in rep_lower:
                     ziel_spalte = "Störung / Defekt"
@@ -434,14 +432,17 @@ elif "bericht" in current_uc_clean:
                     target_keyword = "offen" if "offen" in rep_lower else "erfolgt"
                 elif "feedback" in rep_lower:
                     ziel_spalte = "Feedback Gast"
-                    if "offen" in rep_lower: target_keyword = "offen"
-                    elif "unberücksichtigt" in rep_lower: target_keyword = "unberücksichtigt"
-                    else: target_keyword = "berücksichtigt"
+                    target_keyword = "offen" if "offen" in rep_lower else ("nicht" if "unberücksichtigt" in rep_lower else "berücksichtigt")
                 elif "information" in rep_lower:
                     ziel_spalte = "Keine Information"
-                    if "offen" in rep_lower: target_keyword = "offen"
-                    elif "unberücksichtigt" in rep_lower: target_keyword = "unberücksichtigt"
-                    else: target_keyword = "berücksichtigt"
+                    target_keyword = "offen" if "offen" in rep_lower else ("nicht" if "unberücksichtigt" in rep_lower else "berücksichtigt")
+
+            # Flexibles Keyword-Mapping: "offen" erfasst auch deine Änderungen
+            search_keywords = [target_keyword] if target_keyword else []
+            if target_keyword in ["offen", "aktiv"]:
+                search_keywords = ["offen", "aktiv"]
+            elif target_keyword in ["nicht", "unberücksichtigt"]:
+                search_keywords = ["nicht", "unberücksichtigt"]
 
             if ziel_spalte and df_wissen is not None and ziel_spalte in df_wissen.columns:
                 for _, row in df_wissen.iterrows():
@@ -450,32 +451,49 @@ elif "bericht" in current_uc_clean:
                         lines = [l.strip() for l in cell_val.split("\n") if l.strip()]
                         for line in lines:
                             
-                            if target_keyword and target_keyword not in line.lower():
+                            if search_keywords and not any(k in line.lower() for k in search_keywords):
                                 continue
 
                             if line.startswith("[") and "]" in line:
                                 try:
                                     meta_part, text_part = line.split("]", 1)
                                     date_str = meta_part.replace("[", "").split("|")[0].strip()
-                                    entry_date = datetime.datetime.strptime(date_str, "%d.%m.%Y %H:%M")
                                     
-                                    if entry_date >= stichtag:
-                                        clean_info = text_part.strip().lstrip(":").strip()
+                                    # Robuste Erkennung für verschiedene manuelle Datumsformate
+                                    entry_date = None
+                                    for fmt in ("%d.%m.%Y %H:%M", "%d.%m.%Y"):
+                                        try:
+                                            entry_date = datetime.datetime.strptime(date_str, fmt)
+                                            break
+                                        except ValueError:
+                                            continue
+                                    
+                                    if entry_date:
+                                        if entry_date >= stichtag:
+                                            clean_info = text_part.strip().lstrip(":").strip()
+                                            report_rows.append({
+                                                "Objekt": str(row[bez_col]).strip(),
+                                                "Datum": entry_date.strftime("%d.%m.%Y"),
+                                                "Information": clean_info
+                                            })
+                                    else:
+                                        # Wenn das Datum nicht geparst werden konnte (z.B. Tippfehler), IMMER anzeigen
                                         report_rows.append({
                                             "Objekt": str(row[bez_col]).strip(),
-                                            "Datum": entry_date.strftime("%d.%m.%Y"),
-                                            "Information": clean_info
+                                            "Datum": "Manuell / Offen",
+                                            "Information": text_part.strip().lstrip(":").strip()
                                         })
                                 except:
                                     report_rows.append({
                                         "Objekt": str(row[bez_col]).strip(),
-                                        "Datum": "Historisch",
+                                        "Datum": "Manuell / Offen",
                                         "Information": line
                                     })
                             else:
+                                # Reine händische Texte ohne Metadatenklammern fallen nicht mehr raus
                                 report_rows.append({
                                     "Objekt": str(row[bez_col]).strip(),
-                                    "Datum": "Historisch",
+                                    "Datum": "Manuell / Offen",
                                     "Information": line
                                 })
 
