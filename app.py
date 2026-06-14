@@ -466,7 +466,7 @@ elif "bericht" in current_uc_clean:
                                             "Datum": entry_date.strftime("%d.%m.%Y"),
                                             "Information": clean_info
                                         })
-                                muons:
+                                except:
                                     report_rows.append({
                                         "Objekt": str(row[bez_col]).strip(),
                                         "Datum": "Historisch",
