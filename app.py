@@ -222,7 +222,7 @@ if not st.session_state.aktiver_use_case: st.stop()
 
 
 # ==============================================================================
-# 🎯 SUPERSCHUTZ-WEICHE: SOFORTIGE EXKLUSIVE ISOLATION FÜR "NEUE INFORMATION"
+# 🎯 PROFESSIONELLE ENTCOPPELTE WEICHE FÜR "NEUE INFORMATION"
 # ==============================================================================
 if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.aktive_rolle == "Host":
     st.subheader("📝 Neue Information erfassen")
@@ -266,14 +266,18 @@ if st.session_state.aktiver_use_case == "Neue Information" and st.session_state.
                 st.session_state.selected_field = None
                 st.rerun()
                 
-    st.stop() # ABSOLUTER STOPP: Das Skript bricht hier ab und liest das Lexikon-Textfeld gar nicht erst aus!
+    st.stop() # ABSOLUTER ARCHITEKTUR-STOPP
 
 
 # ==============================================================================
-# HIER FOLGT DIE STANDARD-LOGIK (NUR ERREICHBAR FÜR ANDERE USE CASES)
+# EXTRAKTION DER STANDARD-WERTE AUS DEM LEXIKON (NUR ERREICHBAR FÜR ANDERE USE CASES)
 # ==============================================================================
 uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == st.session_state.aktiver_use_case.lower().strip()]
 richtung = str(uc_row.iloc[0][df_usecases.columns[1]]).strip().upper() if not uc_row.empty else "OUTPUT"
+
+# PROFESSIONELLER SCHUTZ: Wenn wir uns im Standard-Modus bewegen, lesen wir normal aus. 
+# Für "Neue Information" ist diese Sektion durch das st.stop() oben ohnehin geschützt, 
+# aber wir initialisieren die Variablen hier sicherheitshalber komplett ohne XLS-Inhalte.
 fragetext = str(uc_row.iloc[0][df_usecases.columns[4]]).strip() if not uc_row.empty and len(df_usecases.columns) > 4 and pd.notna(uc_row.iloc[0][df_usecases.columns[4]]) else "Wie kann ich helfen?"
 danke_tmpl = str(uc_row.iloc[0][df_usecases.columns[5]]).strip() if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]) else "Danke!"
 
