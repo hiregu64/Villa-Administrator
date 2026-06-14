@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import io
@@ -344,8 +343,8 @@ elif "bericht" in current_uc_clean:
     if df_lexikon is not None:
         col_spaltenname = df_lexikon.columns[0]      # Spalte 1: Physischer Spaltenname
         col_usecase = df_lexikon.columns[3]          # Spalte 4: Use Case ("Bericht")
-        col_regel = df_lexikon.columns[4]            # Spalte 5: Erwartetes Format / Regel ("offen")
-        col_details = df_lexikon.columns[5]          # Spalte 6: Detail Bericht ("Offene Informationen")
+        col_regel = df_lexikon.columns[4]            # Spalte 5: Erwartetes Format / Regel
+        col_details = df_lexikon.columns[5]          # Spalte 6: Detail Bericht
 
         mask_bericht = df_lexikon[col_usecase].astype(str).str.strip().str.lower() == "bericht"
         df_bericht_rows = df_lexikon[mask_bericht]
@@ -362,9 +361,14 @@ elif "bericht" in current_uc_clean:
                         "original_detail": raw_detail
                     }
 
-    # Absolute Fallsicherung rein aus deinen Tabellen-Bezeichnungen aufgebaut
+    # Absolute Fallsicherung mit exakt DEINEN 10 Bezeichnungen aus der Excel-Struktur
     if not report_options:
-        report_options = ["Offene Störungen", "Behobene Störungen", "Offenes Feedback", "Behobenes Feedback", "Offene Informationen"]
+        report_options = [
+            "Offene Störungen", "Behobene Störungen", 
+            "Offene Wartungen", "Erfolgte Wartungen", 
+            "Offenes Feedback", "Unberücksichtigtes Feedback", "Berücksichtigtes Feedback", 
+            "Offene Informationen", "Unberücksichtigte Informationen", "Berücksichtige Informationen"
+        ]
 
     idx_report = report_options.index(st.session_state.selected_report_type) if st.session_state.selected_report_type in report_options else None
     selected_rep = st.selectbox(
@@ -412,45 +416,68 @@ elif "bericht" in current_uc_clean:
 
             lexikon_meta = mapping_dropdown_zu_lexikon_zeile.get(st.session_state.selected_report_type)
             
-            if lexikon_meta and df_wissen is not None:
+            # Dynamischer Fallback-Filter falls kein Excel-Zeilen-Mapping da ist
+            ziel_spalte = None
+            target_keyword = None
+            
+            if lexikon_meta:
                 ziel_spalte = lexikon_meta["spalte_wissen"]
                 target_keyword = lexikon_meta["such_zustand"]
+            else:
+                # Textbasiertes Fallback-Mapping direkt anhand deiner Vorgabe
+                rep_lower = st.session_state.selected_report_type.lower()
+                if "störung" in rep_lower:
+                    ziel_spalte = "Störung / Defekt"
+                    target_keyword = "offen" if "offen" in rep_lower else "ok"
+                elif "wartung" in rep_lower:
+                    ziel_spalte = "Wartung"
+                    target_keyword = "offen" if "offen" in rep_lower else "erfolgt"
+                elif "feedback" in rep_lower:
+                    ziel_spalte = "Feedback Gast"
+                    if "offen" in rep_lower: target_keyword = "offen"
+                    elif "unberücksichtigt" in rep_lower: target_keyword = "unberücksichtigt"
+                    else: target_keyword = "berücksichtigt"
+                elif "information" in rep_lower:
+                    ziel_spalte = "Keine Information"
+                    if "offen" in rep_lower: target_keyword = "offen"
+                    elif "unberücksichtigt" in rep_lower: target_keyword = "unberücksichtigt"
+                    else: target_keyword = "berücksichtigt"
 
-                if ziel_spalte in df_wissen.columns:
-                    for _, row in df_wissen.iterrows():
-                        cell_val = str(row[ziel_spalte]).strip() if pd.notna(row[ziel_spalte]) else ""
-                        if cell_val:
-                            lines = [l.strip() for l in cell_val.split("\n") if l.strip()]
-                            for line in lines:
-                                
-                                if target_keyword and target_keyword not in line.lower():
-                                    continue
+            if ziel_spalte and df_wissen is not None and ziel_spalte in df_wissen.columns:
+                for _, row in df_wissen.iterrows():
+                    cell_val = str(row[ziel_spalte]).strip() if pd.notna(row[ziel_spalte]) else ""
+                    if cell_val:
+                        lines = [l.strip() for l in cell_val.split("\n") if l.strip()]
+                        for line in lines:
+                            
+                            if target_keyword and target_keyword not in line.lower():
+                                continue
 
-                                if line.startswith("[") and "]" in line:
-                                    try:
-                                        meta_part, text_part = line.split("]", 1)
-                                        date_str = meta_part.replace("[", "").split("|")[0].strip()
-                                        entry_date = datetime.datetime.strptime(date_str, "%d.%m.%Y %H:%M")
-                                        
-                                        if entry_date >= stichtag:
-                                            clean_info = text_part.strip().lstrip(":").strip()
-                                            report_rows.append({
-                                                "Objekt": str(row[bez_col]).strip(),
-                                                "Datum": entry_date.strftime("%d.%m.%Y"),
-                                                "Information": clean_info
-                                            })
-                                    except:
+                            if line.startswith("[") and "]" in line:
+                                try:
+                                    meta_part, text_part = line.split("]", 1)
+                                    date_str = meta_part.replace("[", "").split("|")[0].strip()
+                                    entry_date = datetime.datetime.strptime(date_str, "%d.%m.%Y %H:%M")
+                                    
+                                    if entry_date >= stichtag:
+                                        clean_info = text_part.strip().lstrip(":").strip()
                                         report_rows.append({
                                             "Objekt": str(row[bez_col]).strip(),
-                                            "Datum": "Historisch",
-                                            "Information": line
+                                            "Datum": entry_date.strftime("%d.%m.%Y"),
+                                            "Information": clean_info
                                         })
-                                else:
+                                muons:
                                     report_rows.append({
                                         "Objekt": str(row[bez_col]).strip(),
                                         "Datum": "Historisch",
                                         "Information": line
                                     })
+                            else:
+                                report_rows.append({
+                                    "Objekt": str(row[bez_col]).strip(),
+                                    "Datum": "Historisch",
+                                    "Information": line
+                                })
 
             if report_rows:
                 df_report = pd.DataFrame(report_rows)
