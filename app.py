@@ -40,7 +40,8 @@ for key, value in [
     ("selected_field", None), ("messages", []), ("host_authentifiziert", False), 
     ("debug_modus_aktiv", False), ("last_write_status", "Noch kein Schreibvorgang."), 
     ("last_extracted_context", "Kein Kontext extrahiert."), ("matrix_data", None),
-    ("erfolgsmeldung_anzeigen", None), ("host_text_wert", "")
+    ("erfolgsmeldung_anzeigen", None), ("host_text_wert", ""),
+    ("selected_report_type", None), ("selected_report_timeframe", None)
 ]:
     if key not in st.session_state: st.session_state[key] = value
 
@@ -192,6 +193,8 @@ if role and role != st.session_state.aktive_rolle:
     st.session_state.aktiver_use_case, st.session_state.selected_object, st.session_state.selected_field, st.session_state.messages = None, None, None, []
     st.session_state["erfolgsmeldung_anzeigen"] = None
     st.session_state["host_text_wert"] = ""
+    st.session_state.selected_report_type = None
+    st.session_state.selected_report_timeframe = None
     st.rerun()
 
 if not st.session_state.aktive_rolle: st.stop()
@@ -224,6 +227,8 @@ if df_usecases is not None:
                 st.session_state.messages = []
                 st.session_state["erfolgsmeldung_anzeigen"] = None
                 st.session_state["host_text_wert"] = ""
+                st.session_state.selected_report_type = None
+                st.session_state.selected_report_timeframe = None
                 st.rerun()
 
 if not st.session_state.aktiver_use_case: st.stop()
@@ -278,7 +283,6 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
         st.session_state["erfolgsmeldung_anzeigen"] = None
         st.rerun()
 
-    # Das zweite Dropdown erscheint nahtlos unter dem ersten (ohne "Ausgewähltes Objekt")
     if st.session_state.selected_object:
         
         # Filterung aller administrativen Felder gemäß Spalten_Lexikon
@@ -309,7 +313,6 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
             st.rerun()
         
         if st.session_state.selected_field:
-            # Zustand des Textbereichs sichern
             txt = st.text_area("Inhalt erfassen", value=st.session_state["host_text_wert"], placeholder="Hier den Text eingeben...", label_visibility="collapsed", key="host_text_eingabe")
             
             if txt != st.session_state["host_text_wert"]:
@@ -318,19 +321,16 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
             if st.button("💾 In Excel-Zentralmatrix speichern", type="primary") and txt.strip():
                 execute_matrix_input_direct(st.session_state.selected_field, st.session_state.selected_object, txt.strip())
                 
-                # Dankessatz-Template dynamisch aus dem Excel UseCase_Lexikon ziehen
                 danke_text = "Vielen Dank für deine Information."
                 if df_usecases is not None:
                     uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == current_uc_clean]
                     if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]):
                         danke_text = str(uc_row.iloc[0][df_usecases.columns[5]]).strip()
                 
-                # Erledigt: Nachricht in Session State ablegen und Texteingabe-Feld leeren
                 st.session_state["erfolgsmeldung_anzeigen"] = danke_text
                 st.session_state["host_text_wert"] = ""
                 st.rerun()
 
-            # KORREKTUR: Der Dankessatz wird genau hier UNTEN als direkte Reaktion auf die Eingabe ausgegeben!
             if "erfolgsmeldung_anzeigen" in st.session_state and st.session_state["erfolgsmeldung_anzeigen"]:
                 st.success(st.session_state["erfolgsmeldung_anzeigen"])
                 
@@ -338,24 +338,123 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
 
 
 # ==============================================================================
-# DER STANDARD-ZWEIG (CHATS, STÖRUNGEN, FEEDBACK & BERICHTE)
+# 📊 GENERISCHE & DYNAMISCHE USE CASE BERICHTSENGINE
+# ==============================================================================
+elif "bericht" in current_uc_clean:
+    # 1. Berichtstypen dynamisch aus Spalten_Lexikon (Spalte 5 / Index 5) extrahieren
+    report_options = []
+    if df_lexikon is not None and len(df_lexikon.columns) > 5:
+        report_col_name = df_lexikon.columns[5] # "Details Bericht"
+        report_options = df_lexikon[report_col_name].dropna().astype(str).str.strip().unique().tolist()
+        report_options = [opt for opt in report_options if opt.lower() not in ["ja", "nein", "", "nan"]]
+    
+    if not report_options:
+        report_options = ["Störung", "Feedback", "Wartung", "Keine Information"]
+
+    # Erster Dropdown: Berichtsart (Ohne Label, mit exakter Lexikon-Scroll-Abfrage)
+    idx_report = report_options.index(st.session_state.selected_report_type) if st.session_state.selected_report_type in report_options else None
+    selected_rep = st.selectbox(
+        "Berichtsart",
+        options=report_options,
+        index=idx_report,
+        placeholder="Bitte wähle die Art des Berichtes.",
+        label_visibility="collapsed",
+        key="report_type_dropdown"
+    )
+    
+    if selected_rep != st.session_state.selected_report_type:
+        st.session_state.selected_report_type = selected_rep
+        st.rerun()
+
+    # Zweiter Dropdown: Zeitraum (Direkt darunter, mit exakter Lexikon-Scroll-Abfrage)
+    if st.session_state.selected_report_type:
+        timeframe_options = ["1 Woche", "1 Monat", "3 Monate", "1 Jahr"]
+        idx_timeframe = timeframe_options.index(st.session_state.selected_report_timeframe) if st.session_state.selected_report_timeframe in timeframe_options else None
+        
+        selected_tf = st.selectbox(
+            "Zeitraum",
+            options=timeframe_options,
+            index=idx_timeframe,
+            placeholder="Bitte wähle den Zeitraum.",
+            label_visibility="collapsed",
+            key="report_timeframe_dropdown"
+        )
+        
+        if selected_tf != st.session_state.selected_report_timeframe:
+            st.session_state.selected_report_timeframe = selected_tf
+            st.rerun()
+
+        # Wenn beide Parameter gewählt sind, generieren wir den Live-Bericht aus der Excel-Matrix
+        if st.session_state.selected_report_timeframe:
+            st.markdown(f"### 📋 {st.session_state.selected_report_type} ({st.session_state.selected_report_timeframe})")
+            
+            heute = datetime.datetime.now()
+            if st.session_state.selected_report_timeframe == "1 Woche":
+                delta_days = 7
+            elif st.session_state.selected_report_timeframe == "1 Monat":
+                delta_days = 30
+            elif st.session_state.selected_report_timeframe == "3 Monate":
+                delta_days = 90
+            else:
+                delta_days = 365
+            stichtag = heute - datetime.timedelta(days=delta_days)
+
+            # Passende physische Spalten aus Excel ermitteln, die dieser Berichtsart zugeordnet sind
+            ziel_spalten = []
+            if df_lexikon is not None and len(df_lexikon.columns) > 5:
+                spalten_name_col = df_lexikon.columns[0]
+                details_bericht_col = df_lexikon.columns[5]
+                ziel_spalten = df_lexikon[df_lexikon[details_bericht_col].astype(str).str.strip().str.lower() == st.session_state.selected_report_type.lower()][spalten_name_col].dropna().astype(str).str.strip().tolist()
+
+            if not ziel_spalten:
+                ziel_spalten = [c for c in df_wissen.columns if st.session_state.selected_report_type.lower() in c.lower()]
+
+            report_rows = []
+            bez_col = df_wissen.columns[0] if df_wissen is not None else "Bezeichnung"
+
+            if df_wissen is not None:
+                for col in ziel_spalten:
+                    if col in df_wissen.columns:
+                        for _, row in df_wissen.iterrows():
+                            cell_val = str(row[col]).strip() if pd.notna(row[col]) else ""
+                            if cell_val:
+                                lines = cell_val.split("\n")
+                                for line in lines:
+                                    if line.startswith("[") and "]" in line:
+                                        try:
+                                            date_str = line.split("]")[0].replace("[", "").split("|")[0].strip()
+                                            entry_date = datetime.datetime.strptime(date_str, "%d.%m.%Y %H:%M")
+                                            if entry_date >= stichtag:
+                                                clean_info = line.split("]:", 1)[1].strip() if "]:" in line else line
+                                                report_rows.append({
+                                                    "Objekt": row[bez_col],
+                                                    "Datum": entry_date.strftime("%d.%m.%Y"),
+                                                    "Information": f"[{st.session_state.selected_report_type}] {clean_info}"
+                                                })
+                                        except:
+                                            report_rows.append({
+                                                "Objekt": row[bez_col],
+                                                "Datum": "Unbekannt",
+                                                "Information": f"[{st.session_state.selected_report_type}] {line}"
+                                            })
+
+            if report_rows:
+                df_report = pd.DataFrame(report_rows)
+                df_report = df_report.sort_values(by="Datum", ascending=False)
+                st.dataframe(df_report, use_container_width=True, hide_index=True)
+            else:
+                st.info("Keine Einträge für den ausgewählten Zeitraum in der Matrix gefunden.")
+    st.stop()
+
+
+# ==============================================================================
+# DER STANDARD-ZWEIG (CHATS, STÖRUNGEN, FEEDBACK & BERICHTE FÜR GÄSTE)
 # ==============================================================================
 else:
     uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == current_uc_clean]
     direction = str(uc_row.iloc[0][df_usecases.columns[1]]).strip().upper() if not uc_row.empty else "OUTPUT"
     fragetext = str(uc_row.iloc[0][df_usecases.columns[4]]).strip() if not uc_row.empty and len(df_usecases.columns) > 4 and pd.notna(uc_row.iloc[0][df_usecases.columns[4]]) else "Wie kann ich helfen?"
     danke_tmpl = str(uc_row.iloc[0][df_usecases.columns[5]]).strip() if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]) else "Danke!"
-
-    # SYSTEM-BERICHTE
-    if "bericht" in current_uc_clean:
-        typ = st.selectbox("Typ", ["Offene Störungen", "Behobene Störungen", "Offenes Feedback", "Offene Wissenslücken", "Gesamtübersicht"], index=None, placeholder="Berichtsart wählen...")
-        if typ and st.button("📊 Bericht generieren", type="primary", use_container_width=True):
-            lines = []
-            for c in [col for col in df_wissen.columns if any(x in col.lower() for x in ["störung", "feedback", "information"]) and "status" not in col.lower()]:
-                for _, r in df_wissen.iterrows():
-                    if pd.notna(r[c]) and str(r[c]).strip(): lines.append(f"Objekt: {r[df_wissen.columns[0]]} | Feld: {c}\nEintrag: {r[c]}\n---")
-            st.markdown(call_gemini(f"Strukturiere das chronologisch:\n\n" + "\n".join(lines), structured=False) if lines else "Keine Einträge.")
-        st.stop()
 
     # Tabs laden
     bez_col, kat_col = df_wissen.columns[0], ("Wo?" if "Wo?" in df_wissen.columns else df_wissen.columns[1])
