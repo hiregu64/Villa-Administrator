@@ -4,7 +4,7 @@ import io
 import datetime
 import openpyxl
 import json
-from openpyxl.styles import Font, Alignment
+from openpyxl.styles import Font, Alignment, PatternFill
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
@@ -132,7 +132,7 @@ def extract_context_for_object(objekt_name):
     return st.session_state.last_extracted_context
 
 # ==============================================================================
-# 5. MATRIZEN-SCHREIBENGINE
+# 5. MATRIZEN-SCHREIBENGINE (MIT HIERARCHISCHER BLAU-FÄRBUNG)
 # ==============================================================================
 def execute_matrix_input_direct(physische_spalte, objekt, text):
     if drive_service is None or df_wissen is None: return
@@ -155,6 +155,11 @@ def execute_matrix_input_direct(physische_spalte, objekt, text):
             old = ws.cell(row_idx, col_idx).value or ""
             ws.cell(row_idx, col_idx).value = f"{old}\n[{datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | {st.session_state.aktive_rolle}]: {text}".strip()
             ws.cell(row_idx, col_idx).alignment = Alignment(wrap_text=True)
+            
+            # ISSUE 1: Zelle blau einfärben gemäß Spezifikation (#1F4E78)
+            blue_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+            ws.cell(row_idx, col_idx).fill = blue_fill
+            ws.cell(row_idx, col_idx).font = Font(color="FFFFFF") # Weißer Text für optimale Lesbarkeit auf blauem Grund
             
             status_idx = find_column_by_fuzzy_name(headers, f"{physische_spalte} Status")
             if status_idx: ws.cell(row_idx, status_idx).value = "offen"
@@ -235,22 +240,21 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
         mask = df_wissen[kat_col].astype(str).str.contains(pattern, case=False, na=False)
         return sorted(df_wissen[mask][bez_col].dropna().drop_duplicates().astype(str).str.strip().tolist())
 
-    # Nahtlose Integration des bekannten Tab-HMI für die Objektauswahl
-    st.write("### 1. Objekt auswählen")
+    # ISSUE 2: Dropdown zeigt Abfragetext im Fenster, keine doppelte Zeile darüber
     tab_innen, tab_aussen, tab_naehe = st.tabs(["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"])
 
     with tab_innen:
-        val_innen = st.selectbox("Ausstattung innen:", options=["Bitte Objekt wählen..."] + get_liste_host("innen"), key="h_innen", label_visibility="collapsed")
+        val_innen = st.selectbox("Ausstattung innen", options=["Bitte wähle das Objekt aus."] + get_liste_host("innen"), key="h_innen", label_visibility="collapsed")
     with tab_aussen:
-        val_aussen = st.selectbox("Ausstattung außen:", options=["Bitte Objekt wählen..."] + get_liste_host("außen|aussen"), key="h_aussen", label_visibility="collapsed")
+        val_aussen = st.selectbox("Ausstattung außen", options=["Bitte wähle das Objekt aus."] + get_liste_host("außen|aussen"), key="h_aussen", label_visibility="collapsed")
     with tab_naehe:
-        val_naehe = st.selectbox("In der Nähe:", options=["Bitte Objekt wählen..."] + get_liste_host("nähe|naehe"), key="h_naehe", label_visibility="collapsed")
+        val_naehe = st.selectbox("In der Nähe", options=["Bitte wähle das Objekt aus."] + get_liste_host("nähe|naehe"), key="h_naehe", label_visibility="collapsed")
 
     # Auswertung, welches Objekt in den Tabs angeklickt wurde
     aktuell_gewaehlt = None
-    if val_innen != "Bitte Objekt wählen...": aktuell_gewaehlt = val_innen
-    elif val_aussen != "Bitte Objekt wählen...": aktuell_gewaehlt = val_aussen
-    elif val_naehe != "Bitte Objekt wählen...": aktuell_gewaehlt = val_naehe
+    if val_innen != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_innen
+    elif val_aussen != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_aussen
+    elif val_naehe != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_naehe
 
     if aktuell_gewaehlt and aktuell_gewaehlt != st.session_state.selected_object:
         st.session_state.selected_object = aktuell_gewaehlt
@@ -261,10 +265,7 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
     if st.session_state.selected_object:
         st.info(f"Ausgewähltes Objekt: **{st.session_state.selected_object}**")
         
-        st.write("### 2. Art der Information auswählen")
-        
-        # Rigoroser Filter: Wir holen alle Zeilen aus Spalte 1 des Spalten_Lexikons, 
-        # schmeißen die administrativen Felder strikt heraus und starten exakt ab "Marke/ Typ"
+        # ISSUE 3: Art der Information zeigt Abfragetext im Fenster, keine Extrazeile darüber
         if df_lexikon is not None:
             lexikon_spalten = df_lexikon[df_lexikon.columns[0]].dropna().astype(str).str.strip().tolist()
             options_spalten = [
@@ -273,12 +274,11 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
                 and not col.lower().endswith("status")
             ]
         else:
-            # Fallback falls df_lexikon nicht bereitsteht
             options_spalten = [c for c in df_wissen.columns if c.lower() not in ["bezeichnung", "wo?", "id", "kategorie", "relevanz gast", "system"] and not c.lower().endswith("status")]
 
         s_auswahl = st.selectbox(
-            "Wähle das Zielfeld für die Excel-Matrix:",
-            options=["-- Bitte Spalte auswählen --"] + options_spalten, # Ohne Sortierung, um Excel-Reihenfolge (Marke/Typ -> Besonderheit...) beizubehalten
+            "Wähle die Art der Information aus...",
+            options=["-- Bitte Spalte auswählen --"] + options_spalten,
             key="dropdown_neue_info_spalte",
             label_visibility="collapsed"
         )
@@ -287,12 +287,20 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
             st.session_state.selected_field = s_auswahl
             
             # 3. Inhalt erfassen und abspeichern
-            st.write("### 3. Inhalt eingeben")
-            txt = st.text_area(f"Neuer Eintrag für '{st.session_state.selected_object}' in das Feld '{st.session_state.selected_field}':", placeholder="Hier den Text eingeben...")
+            st.write("### Inhalt eingeben")
+            txt = st.text_area(f"Neuer Eintrag für '{st.session_state.selected_object}' in das Feld '{st.session_state.selected_field}':", placeholder="Hier den Text eingeben...", label_visibility="collapsed")
             
             if st.button("💾 In Excel-Zentralmatrix speichern", type="primary") and txt.strip():
                 execute_matrix_input_direct(st.session_state.selected_field, st.session_state.selected_object, txt.strip())
-                st.success("Erfolgreich in Excel-Zentralmatrix gespeichert!")
+                
+                # ISSUE 4: Korrekte Rückmeldung aus der Excel-Spezifikation via Toast und Dialog ausgeben
+                danke_text = "Vielen Dank für deine Information."
+                if df_usecases is not None:
+                    uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == current_uc_clean]
+                    if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]):
+                        danke_text = str(uc_row.iloc[0][df_usecases.columns[5]]).strip()
+                
+                st.success(danke_text)
                 
                 # State aufräumen für den nächsten Durchlauf
                 st.session_state.selected_object = None
@@ -307,7 +315,7 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
 # ==============================================================================
 else:
     uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == current_uc_clean]
-    richtung = str(uc_row.iloc[0][df_usecases.columns[1]]).strip().upper() if not uc_row.empty else "OUTPUT"
+    direction = str(uc_row.iloc[0][df_usecases.columns[1]]).strip().upper() if not uc_row.empty else "OUTPUT"
     fragetext = str(uc_row.iloc[0][df_usecases.columns[4]]).strip() if not uc_row.empty and len(df_usecases.columns) > 4 and pd.notna(uc_row.iloc[0][df_usecases.columns[4]]) else "Wie kann ich helfen?"
     danke_tmpl = str(uc_row.iloc[0][df_usecases.columns[5]]).strip() if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]) else "Danke!"
 
@@ -333,11 +341,11 @@ else:
     tab_innen, tab_aussen, tab_naehe = st.tabs(["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"])
 
     with tab_innen:
-        val_innen = st.selectbox("Ausstattung innen:", options=["Bitte wähle das Objekt aus."] + get_liste("innen"), key="g_innen", label_visibility="collapsed")
+        val_innen = st.selectbox("Ausstattung innen", options=["Bitte wähle das Objekt aus."] + get_liste("innen"), key="g_innen", label_visibility="collapsed")
     with tab_aussen:
-        val_aussen = st.selectbox("Ausstattung außen:", options=["Bitte wähle das Objekt aus."] + get_liste("außen|aussen"), key="g_aussen", label_visibility="collapsed")
+        val_aussen = st.selectbox("Ausstattung außen", options=["Bitte wähle das Objekt aus."] + get_liste("außen|aussen"), key="g_aussen", label_visibility="collapsed")
     with tab_naehe:
-        val_naehe = st.selectbox("In der Nähe:", options=["Bitte wähle das Objekt aus."] + get_liste("nähe|naehe"), key="g_naehe", label_visibility="collapsed")
+        val_naehe = st.selectbox("In der Nähe", options=["Bitte wähle das Objekt aus."] + get_liste("nähe|naehe"), key="g_naehe", label_visibility="collapsed")
 
     aktuell_gewaehlt = None
     if val_innen != "Bitte wähle das Objekt aus.": aktuell_gewaehlt = val_innen
@@ -364,7 +372,7 @@ else:
         u_text = st.session_state.messages[-1]["content"]
         is_not_found = "nicht gefunden" in st.session_state.selected_object.lower()
         
-        if richtung == "OUTPUT":
+        if direction == "OUTPUT":
             if is_not_found:
                 st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
                 execute_matrix_input("Keine Information", st.session_state.selected_object, u_text)
@@ -378,7 +386,7 @@ else:
                         st.session_state.messages.append({"role": "assistant", "content": res.antwort_text})
             st.rerun()
             
-        elif richtung == "INPUT":
+        elif direction == "INPUT":
             with st.spinner("Protokolliere in Matrix..."):
                 execute_matrix_input(st.session_state.aktiver_use_case, st.session_state.selected_object, u_text)
                 st.session_state.messages.append({"role": "assistant", "content": danke_tmpl.replace("{use_case}", st.session_state.aktiver_use_case)})
