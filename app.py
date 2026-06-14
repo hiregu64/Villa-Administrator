@@ -234,10 +234,6 @@ if not st.session_state.aktiver_use_case: st.stop()
 # ==============================================================================
 current_uc_clean = str(st.session_state.aktiver_use_case).strip().lower()
 
-# Persistenten Zustand für den Abschlusssatz rendern
-if "erfolgsmeldung_anzeigen" in st.session_state and st.session_state["erfolgsmeldung_anzeigen"]:
-    st.success(st.session_state["erfolgsmeldung_anzeigen"])
-
 if "information" in current_uc_clean and "keine" not in current_uc_clean and "bericht" not in current_uc_clean and str(st.session_state.aktive_rolle).strip().lower() == "host":
     
     # Weiche für Tab-Listen-Generierung aus der Wissensbasis
@@ -246,10 +242,10 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
         mask = df_wissen[kat_col].astype(str).str.contains(pattern, case=False, na=False)
         return sorted(df_wissen[mask][bez_col].dropna().drop_duplicates().astype(str).str.strip().tolist())
 
-    # Sauberer Einstieg direkt über die Tabs
+    # Einstieg direkt über die Tabs ohne falsche Überschrift
     tab_innen, tab_aussen, tab_naehe = st.tabs(["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"])
 
-    # Ermittlung des aktuell im Session State hinterlegten Objekts für die korrekte Tab-Vorauswahl
+    # Ermittlung des aktuell im Session State hinterlegten Objekts
     current_obj = st.session_state.selected_object
     
     with tab_innen:
@@ -282,10 +278,10 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
         st.session_state["erfolgsmeldung_anzeigen"] = None
         st.rerun()
 
-    # Das zweite Dropdown erscheint nahtlos unter dem ersten Dropdown (Das blaue Hinweisfeld wurde entfernt)
+    # Das zweite Dropdown erscheint nahtlos unter dem ersten (ohne "Ausgewähltes Objekt")
     if st.session_state.selected_object:
         
-        # Rigorose Filterung aller administrativen Felder (Spaltenname, Bezeichnung, Wo, Relevanz, System) vor "Marke/ Typ"
+        # Filterung aller administrativen Felder gemäß Spalten_Lexikon
         if df_lexikon is not None:
             lexikon_spalten = df_lexikon[df_lexikon.columns[0]].dropna().astype(str).str.strip().tolist()
             options_spalten = [
@@ -322,19 +318,21 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
             if st.button("💾 In Excel-Zentralmatrix speichern", type="primary") and txt.strip():
                 execute_matrix_input_direct(st.session_state.selected_field, st.session_state.selected_object, txt.strip())
                 
-                # Feedback-Text aus dem Excel-Lexikon ziehen
+                # Dankessatz-Template dynamisch aus dem Excel UseCase_Lexikon ziehen
                 danke_text = "Vielen Dank für deine Information."
                 if df_usecases is not None:
                     uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == current_uc_clean]
                     if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]):
                         danke_text = str(uc_row.iloc[0][df_usecases.columns[5]]).strip()
                 
-                # In persistenten State schreiben
+                # Erledigt: Nachricht in Session State ablegen und Texteingabe-Feld leeren
                 st.session_state["erfolgsmeldung_anzeigen"] = danke_text
-                
-                # Textfeld leeren
                 st.session_state["host_text_wert"] = ""
                 st.rerun()
+
+            # KORREKTUR: Der Dankessatz wird genau hier UNTEN als direkte Reaktion auf die Eingabe ausgegeben!
+            if "erfolgsmeldung_anzeigen" in st.session_state and st.session_state["erfolgsmeldung_anzeigen"]:
+                st.success(st.session_state["erfolgsmeldung_anzeigen"])
                 
     st.stop()
 
