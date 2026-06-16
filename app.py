@@ -161,15 +161,17 @@ def execute_matrix_input_direct(physische_spalte, objekt, text):
         if col_idx:
             old = ws.cell(row_idx, col_idx).value or ""
             if old:
-                ws.cell(row_idx, col_idx).value = f"{str(old).strip()}\n[{datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | {st.session_state.aktive_rolle} | offen]: {text}".strip()
+                ws.cell(row_idx, col_idx).value = f"{str(old).strip()}\n{text}".strip()
             else:
-                ws.cell(row_idx, col_idx).value = f"[{datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | {st.session_state.aktive_rolle} | offen]: {text}".strip()
+                ws.cell(row_idx, col_idx).value = f"{text}".strip()
             
             ws.cell(row_idx, col_idx).alignment = Alignment(wrap_text=True)
             ws.cell(row_idx, col_idx).font = Font(color="1F4E78", bold=False)
             
             status_idx = find_column_by_fuzzy_name(headers, f"{physische_spalte} Status")
-            if status_idx: ws.cell(row_idx, status_idx).value = "offen"
+            if status_idx: 
+                # Das Datum wird jetzt sauber in die Status-Spalte geschrieben
+                ws.cell(row_idx, status_idx).value = f"offen ({datetime.datetime.now().strftime('%d.%m.%Y')})"
             
             out = io.BytesIO()
             wb.save(out)
@@ -342,7 +344,7 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
 
 
 # ==============================================================================
-# 📊 USE CASE BERICHTSENGINE
+# 📊 USE CASE BERICHTSENGINE (ZEITRAUM UND SPALTENTRENNUNG REPARIERT)
 # ==============================================================================
 elif "bericht" in current_uc_clean:
     report_options = []
@@ -411,6 +413,13 @@ elif "bericht" in current_uc_clean:
         if st.session_state.selected_report_timeframe:
             st.markdown(f"### 📋 {st.session_state.selected_report_type} ({st.session_state.selected_report_timeframe})")
             
+            # --- DEBUG-BANNER FÜR ADMIN-MODUS ---
+            if st.session_state.debug_modus_aktiv:
+                st.warning("⚙️ **DEBUG MODE ACTIVE**")
+                headers_list = list(df_wissen.columns) if df_wissen is not None else []
+                st.write("📁 **Vorhandene Spalten in Excel-Wissensbasis:**")
+                st.json(headers_list)
+
             heute = datetime.datetime.now()
             if st.session_state.selected_report_timeframe == "1 Woche": delta_days = 7
             elif st.session_state.selected_report_timeframe == "1 Monat": delta_days = 30
@@ -443,73 +452,91 @@ elif "bericht" in current_uc_clean:
                     target_keyword = "offen"
 
             echte_ziel_spalte = None
+            echte_status_spalte = None
+            
             if df_wissen is not None and ziel_spalte:
+                # Finde die echte Hauptspalte (z.B. "Störung / Defekt")
                 for c in df_wissen.columns:
                     if str(c).strip().lower() == str(ziel_spalte).strip().lower():
                         echte_ziel_spalte = c
                         break
+                
+                # Finde die zugehörige Statusspalte (z.B. "Störung / Defekt Status")
+                status_suchname = f"{str(ziel_spalte).strip().lower()} status"
+                for c in df_wissen.columns:
+                    if str(c).strip().lower() == status_suchname:
+                        echte_status_spalte = c
+                        break
 
-            # Hauptindikatoren für relevante Zeilen
             search_keywords = ["offen", "nicht"]
 
             if echte_ziel_spalte and df_wissen is not None:
+                if st.session_state.debug_modus_aktiv:
+                    st.info(f"🔍 **Scan-Parameter** ➔ **Textspalte:** '{echte_ziel_spalte}' | **Statusspalte:** '{echte_status_spalte}' | **Keyword:** {target_keyword}")
+
                 for _, row in df_wissen.iterrows():
-                    cell_val = str(row[echte_ziel_spalte]).strip() if pd.notna(row[echte_ziel_spalte]) else ""
+                    # 1. Hole den Inhalt aus der Statusspalte für die Filterung
+                    status_val = str(row[echte_status_spalte]).strip() if echte_status_spalte and pd.notna(row[echte_status_spalte]) else ""
+                    status_lower = status_val.lower()
+
+                    # Falls kein Status gepflegt ist, hat diese Zeile keine Relevanz für den Bericht
+                    if not status_val or status_val.lower() == "nan":
+                        continue
+
+                    # WEG A: Erst den Status validieren (Grob- und Detailsuche direkt in der Statusspalte)
+                    if not any(k in status_lower for k in search_keywords):
+                        continue
+                        
+                    if target_keyword and target_keyword not in status_lower:
+                        continue
+
+                    # 2. Datumsprüfung: Datum wird JETZT aus der Statusspalte per Regex extrahiert!
+                    ist_zeitraum_gueltig = True
                     
-                    if cell_val and cell_val.lower() != "nan":
-                        lines = [l.strip() for l in cell_val.split("\n") if l.strip()]
-                        for line in lines:
-                            line_lower = line.lower()
-
-                            # ==========================================================
-                            # IMPLEMENTIERUNG WEG A (ERST STATUS, DANN DATUM PRÜFEN)
-                            # ==========================================================
-                            
-                            # 1. Grobfilter nach Zustandswörtern
-                            if not any(k in line_lower for k in search_keywords):
-                                continue
-                                
-                            # 2. Spezifischer Ziel-Filter (z.B. "offen" gefordert)
-                            if target_keyword and target_keyword not in line_lower:
-                                continue
-
-                            # 3. Datumsprüfung für die gefilterten Status-Zeilen
+                    if not st.session_state.debug_modus_aktiv:
+                        match = re.search(r'(\d{1,2})[-./](\d{1,2})[-./](\d{4})', status_val)
+                        if match:
+                            day, month, year = match.group(1), match.group(2), match.group(3)
+                            date_str = f"{day.zfill(2)}.{month.zfill(2)}.{year}"
+                            try:
+                                entry_date = datetime.datetime.strptime(date_str, "%d.%m.%Y")
+                                # Wenn das Datum älter als der gewählte Zeitraum ist -> Ausblenden
+                                if entry_date < stichtag:
+                                    ist_zeitraum_gueltig = False
+                            except:
+                                pass
+                        else:
+                            # Falls kein Datum in der Statusspalte steht (wie bei den Altdaten), 
+                            # werten wir es als "immer gültig/wichtig", damit nichts verloren geht.
                             ist_zeitraum_gueltig = True
-                            match = re.search(r'(\d{1,2})[-./](\d{1,2})[-./](\d{4})', line)
-                            
-                            if match:
-                                day, month, year = match.group(1), match.group(2), match.group(3)
-                                date_str = f"{day.zfill(2)}.{month.zfill(2)}.{year}"
-                                try:
-                                    entry_date = datetime.datetime.strptime(date_str, "%d.%m.%Y")
-                                    # Falls das extrahierte Datum älter ist als der Stichtag, überspringen
-                                    if entry_date < stichtag:
-                                        ist_zeitraum_gueltig = False
-                                except:
-                                    pass
-                            
-                            if not ist_zeitraum_gueltig:
-                                continue
-                            
-                            # Zeile ist valide -> Bereinigen für Ausgabe
-                            clean_info = line.replace("[", "").replace("]", "").strip()
-                            
-                            # SPEZIFIKATION: Schlanke Debug-Ausgabe NUR für Admin-Modus
-                            if st.session_state.debug_modus_aktiv:
-                                st.write(f"**Objekt:** {row[bez_col]} | **Spalte:** {echte_ziel_spalte} | **Text/Fehlermeldung:** {line}")
-                            
-                            # SPEZIFIKATION: KI-Textaufbereitung für den echten Bericht
-                            aufbereiteter_text = call_gemini(
-                                prompt=f"Formuliere folgende abgehackte Information in einen professionellen, flüssigen und grammatikalisch fehlerfreien deutschen Satz um. Beziehe das Objekt '{row[bez_col]}' logisch mit ein: {clean_info}",
-                                structured=False
-                            )
-                            
-                            report_rows.append({
-                                "Eintrag": aufbereiteter_text
-                            })
+                    
+                    if not ist_zeitraum_gueltig:
+                        continue
+                    
+                    # 3. Textausgabe: Jetzt holen wir den eigentlichen Text aus der Hauptspalte!
+                    haupt_text = str(row[echte_ziel_spalte]).strip() if pd.notna(row[echte_ziel_spalte]) else ""
+                    if not haupt_text or haupt_text.lower() == "nan":
+                        continue
+                    
+                    # Bereinige eckige Klammern falls vorhanden
+                    clean_info = haupt_text.replace("[", "").replace("]", "").strip()
+                    
+                    if st.session_state.debug_modus_aktiv:
+                        st.write(f"🔬 **Zeile:** {row[bez_col]} ➔ **Status:** {status_val} | **Text:** {haupt_text}")
+                    
+                    # KI-Satzaufbereitung
+                    aufbereiteter_text = call_gemini(
+                        prompt=f"Formuliere folgende abgehackte Information in einen professionellen, flüssigen und grammatikalisch fehlerfreien deutschen Satz um. Beziehe das Objekt '{row[bez_col]}' logisch mit ein: {clean_info}",
+                        structured=False
+                    )
+                    
+                    report_rows.append({
+                        "Eintrag": aufbereiteter_text
+                    })
 
-            # VALIDIERUNG & AUSGABE DER ERGEBNISSE
+            # AUSGABE DER ERGEBNISSE
             if report_rows:
+                st.markdown("---")
                 for row_data in report_rows:
                     st.write(row_data["Eintrag"])
             else:
