@@ -4,6 +4,7 @@ import io
 import datetime
 import openpyxl
 import json
+import re
 from openpyxl.styles import Font, Alignment
 from pydantic import BaseModel, Field
 from google import genai
@@ -134,7 +135,7 @@ def extract_context_for_object(objekt_name):
     return st.session_state.last_extracted_context
 
 # ==============================================================================
-# 5. MATRIZEN-SCHREIBENGINE (SCHRIFTFARBE BLAU #1F4E78)
+# 5. MATRIZEN-SCHREIBENGINE (STATUS IMMER 'OFFEN', SCHRIFTFARBE BLAU #1F4E78)
 # ==============================================================================
 def execute_matrix_input_direct(physische_spalte, objekt, text):
     if drive_service is None or df_wissen is None: return
@@ -334,7 +335,7 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
 
 
 # ==============================================================================
-# 📊 GENERISCHE & DYNAMISCHE USE CASE BERICHTSENGINE (LEXIKON-STEUERUNG)
+# 📊 GENERISCHE & DYNAMISCHE USE CASE BERICHTSENGINE (DYN-REGULIERUNG)
 # ==============================================================================
 elif "bericht" in current_uc_clean:
     report_options = []
@@ -361,13 +362,13 @@ elif "bericht" in current_uc_clean:
                         "original_detail": raw_detail
                     }
 
-    # Absolute Fallsicherung mit exakt DEINEN Bezeichnungen
+    # Absolute Fallsicherung bei fehlendem Lexikon-Mapping
     if not report_options:
         report_options = [
             "Offene Störungen", "Behobene Störungen", 
             "Offene Wartungen", "Erfolgte Wartungen", 
-            "Offenes Feedback", "Unberücksichtigtes Feedback", "Berücksichtigtes Feedback", 
-            "Offene Informationen", "Unberücksichtigte Informationen", "Berücksichtige Informationen"
+            "Offenes Feedback", "Behobenes Feedback", 
+            "Offene Wissenslücken"
         ]
 
     idx_report = report_options.index(st.session_state.selected_report_type) if st.session_state.selected_report_type in report_options else None
@@ -432,78 +433,69 @@ elif "bericht" in current_uc_clean:
                     target_keyword = "offen" if "offen" in rep_lower else "erfolgt"
                 elif "feedback" in rep_lower:
                     ziel_spalte = "Feedback Gast"
-                    target_keyword = "offen" if "offen" in rep_lower else ("nicht" if "unberücksichtigt" in rep_lower else "berücksichtigt")
-                elif "information" in rep_lower:
+                    target_keyword = "offen" if "offen" in rep_lower else "nicht"
+                elif "wissenslücke" in rep_lower or "information" in rep_lower:
                     ziel_spalte = "Keine Information"
-                    target_keyword = "offen" if "offen" in rep_lower else ("nicht" if "unberücksichtigt" in rep_lower else "berücksichtigt")
+                    target_keyword = "offen" if "offen" in rep_lower else "nicht"
 
-            # Flexibles Keyword-Mapping: "offen" erfasst auch deine Änderungen
-            search_keywords = [target_keyword] if target_keyword else []
-            if target_keyword in ["offen", "aktiv"]:
-                search_keywords = ["offen", "aktiv"]
-            elif target_keyword in ["nicht", "unberücksichtigt"]:
-                search_keywords = ["nicht", "unberücksichtigt"]
+            # Filter-Zustände einschränken (Status 'aktiv' gibt es nicht mehr)
+            search_keywords = ["offen", "nicht"]
 
             if ziel_spalte and df_wissen is not None and ziel_spalte in df_wissen.columns:
                 for _, row in df_wissen.iterrows():
                     cell_val = str(row[ziel_spalte]).strip() if pd.notna(row[ziel_spalte]) else ""
-                    if cell_val:
+                    
+                    # Debug Modus exklusiv für den verifizierten Host einblenden
+                    if st.session_state.debug_modus_aktiv:
+                        st.write(f"🔍 DEBUG [Spalte: {ziel_spalte}] Prüfe {row[bez_col]}: {cell_val[:80]}...")
+
+                    if cell_val and cell_val.lower() != "nan":
                         lines = [l.strip() for l in cell_val.split("\n") if l.strip()]
                         for line in lines:
+                            line_lower = line.lower()
                             
-                            if search_keywords and not any(k in line.lower() for k in search_keywords):
+                            # Überprüfung, ob eines der gültigen Status-Keywords im Text vorhanden ist
+                            if not any(k in line_lower for k in search_keywords):
+                                continue
+                                
+                            # Zusätzlicher Check, ob das konkrete Ziel-Keyword des Berichts matched
+                            if target_keyword and target_keyword not in line_lower:
                                 continue
 
-                            if line.startswith("[") and "]" in line:
+                            # --- FLEXIBLER DATE-PARSER (Regex-Suche nach dd.mm.yyyy, dd-mm-yyyy, dd/mm/yyyy) ---
+                            date_str = "Manuell / Offen"
+                            # Sucht nach 2 Ziffern, gefolgt von einem Trenner (. oder - oder /), 2 Ziffern, Trenner, 4 Ziffern
+                            match = re.search(r'(\d{2})[-./](\d{2})[-./](\d{4})', line)
+                            
+                            if match:
+                                day, month, year = match.group(1), match.group(2), match.group(3)
+                                # Vereinheitlichen für die spätere chronologische Sortierung und einheitliche HMI
+                                date_str = f"{day}.{month}.{year}"
                                 try:
-                                    meta_part, text_part = line.split("]", 1)
-                                    date_str = meta_part.replace("[", "").split("|")[0].strip()
-                                    
-                                    # Robuste Erkennung für verschiedene manuelle Datumsformate
-                                    entry_date = None
-                                    for fmt in ("%d.%m.%Y %H:%M", "%d.%m.%Y"):
-                                        try:
-                                            entry_date = datetime.datetime.strptime(date_str, fmt)
-                                            break
-                                        except ValueError:
-                                            continue
-                                    
-                                    if entry_date:
-                                        if entry_date >= stichtag:
-                                            clean_info = text_part.strip().lstrip(":").strip()
-                                            report_rows.append({
-                                                "Objekt": str(row[bez_col]).strip(),
-                                                "Datum": entry_date.strftime("%d.%m.%Y"),
-                                                "Information": clean_info
-                                            })
-                                    else:
-                                        # Wenn das Datum nicht geparst werden konnte (z.B. Tippfehler), IMMER anzeigen
-                                        report_rows.append({
-                                            "Objekt": str(row[bez_col]).strip(),
-                                            "Datum": "Manuell / Offen",
-                                            "Information": text_part.strip().lstrip(":").strip()
-                                        })
+                                    entry_date = datetime.datetime.strptime(date_str, "%d.%m.%Y")
+                                    # Wenn das Datum älter als der gewählte Zeithorizont ist, überspringen
+                                    if entry_date < stichtag:
+                                        continue
                                 except:
-                                    report_rows.append({
-                                        "Objekt": str(row[bez_col]).strip(),
-                                        "Datum": "Manuell / Offen",
-                                        "Information": line
-                                    })
-                            else:
-                                # Reine händische Texte ohne Metadatenklammern fallen nicht mehr raus
-                                report_rows.append({
-                                    "Objekt": str(row[bez_col]).strip(),
-                                    "Datum": "Manuell / Offen",
-                                    "Information": line
-                                })
+                                    pass # Bei Parsingfehler verbleibt das Element sicherheitshalber im Bericht
+                            
+                            # Klammern für die finale Tabellenanzeige entfernen
+                            clean_info = line.replace("[", "").replace("]", "").strip()
+                            
+                            report_rows.append({
+                                "Objekt": str(row[bez_col]).strip(),
+                                "Datum": date_str,
+                                "Information": clean_info
+                            })
 
             if report_rows:
                 df_report = pd.DataFrame(report_rows)
+                # Hilfsspalte für korrekte chronologische Sortierung generieren
                 df_report["_sort_date"] = pd.to_datetime(df_report["Datum"], format="%d.%m.%Y", errors="coerce")
                 df_report = df_report.sort_values(by="_sort_date", ascending=False).drop(columns=["_sort_date"])
                 st.dataframe(df_report, use_container_width=True, hide_index=True)
             else:
-                st.info(f"Keine Einträge für '{st.session_state.selected_report_type}' im gewählten Zeitraum in der Matrix gefunden.")
+                st.info(f"Keine Einträge für '{st.session_state.selected_report_type}' im gewählten Zeitraum gefunden.")
     st.stop()
 
 
