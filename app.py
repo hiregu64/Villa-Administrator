@@ -47,7 +47,7 @@ for key, value in [
     if key not in st.session_state: st.session_state[key] = value
 
 # ==============================================================================
-# 3. DATEN-LADE ENGINE & FREEZE-PROTOKOLL
+# 3. DATEN-LADE ENGINE
 # ==============================================================================
 def fetch_matrix_from_drive():
     try:
@@ -81,10 +81,10 @@ def fetch_matrix_from_drive():
         return False
 
 if st.session_state.matrix_data is None:
-    with st.spinner("Initialisiere geschützte Matrix-Daten..."):
+    with st.spinner("Initialisiere Matrix-Daten..."):
         erfolg = fetch_matrix_from_drive()
         if not erfolg:
-            st.error("❌ Kritischer Fehler: Verbindung zu Google Drive fehlgeschlagen. Bitte Secrets prüfen.")
+            st.error("❌ Kritischer Fehler: Verbindung zu Google Drive fehlgeschlagen.")
             st.stop()
 
 df_wissen = st.session_state.matrix_data["wissen"] if st.session_state.matrix_data else None
@@ -213,7 +213,7 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
             if pwd.strip().lower() == str(r[p_pwd_col]).strip().lower():
                 st.session_state.host_authentifiziert = True
                 
-                # SPEZIFIKATION: Debug-Modus wird hier exklusiv NUR bei Passwort "Admin" eingeschaltet!
+                # SPEZIFIKATION: Debug-Modus AUSSCHLIESSLICH bei Passwort "Admin"
                 if pwd.strip().lower() == "admin":
                     st.session_state.debug_modus_aktiv = True
                 else:
@@ -245,7 +245,7 @@ if not st.session_state.aktiver_use_case: st.stop()
 
 
 # ==============================================================================
-# 🎯 DEFENSIVE & FLEXIBLE ERKENNUNG DER INFORMATIONSMATRIX-ANSICHT
+# 🎯 INFORMATIONSMATRIX-ANSICHT
 # ==============================================================================
 current_uc_clean = str(st.session_state.aktiver_use_case).strip().lower()
 
@@ -342,20 +342,11 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
 
 
 # ==============================================================================
-# 📊 GENERISCHE & DYNAMISCHE USE CASE BERICHTSENGINE
+# 📊 USE CASE BERICHTSENGINE
 # ==============================================================================
 elif "bericht" in current_uc_clean:
     report_options = []
     mapping_dropdown_zu_lexikon_zeile = {}
-
-    # SPEZIFIKATION: DEBUG-FENSTER WIRD EXKLUSIV NUR BEI AKTIVEM DEBUG-MODUS (PASSWORT "ADMIN") SICHTBAR
-    if st.session_state.debug_modus_aktiv:
-        st.warning("⚙️ **DEBUG MODE ACTIVE**")
-        if df_wissen is not None:
-            st.write("📂 Vorhandene Spalten in Excel-Wissensbasis:")
-            st.code(list(df_wissen.columns))
-            st.write("📄 Auszug der ersten Zeilen:")
-            st.dataframe(df_wissen.head(5))
 
     if df_lexikon is not None:
         col_spaltenname = df_lexikon.columns[0]
@@ -451,7 +442,6 @@ elif "bericht" in current_uc_clean:
                     ziel_spalte = "Keine Information"
                     target_keyword = "offen"
 
-            # Spaltenzuordnung (Groß-/Kleinschreibung ignorieren)
             echte_ziel_spalte = None
             if df_wissen is not None and ziel_spalte:
                 for c in df_wissen.columns:
@@ -465,10 +455,6 @@ elif "bericht" in current_uc_clean:
                                 echte_ziel_spalte = c
                                 break
 
-            # DEBUG-AUSGABE DER GEFILTERTEN WERTE
-            if st.session_state.debug_modus_aktiv:
-                st.info(f"🔍 Scan-Parameter ➔ Spalte: `{echte_ziel_spalte}` | Keyword: `{target_keyword}`")
-
             search_keywords = ["offen", "nicht"]
 
             if echte_ziel_spalte and df_wissen is not None:
@@ -480,8 +466,9 @@ elif "bericht" in current_uc_clean:
                         for line in lines:
                             line_lower = line.lower()
                             
+                            # SPEZIFIKATION: Schlanke, einheitliche Formatierung im Debug-Modus (Passwort "Admin")
                             if st.session_state.debug_modus_aktiv:
-                                st.write(f"🔬 Zeile: `{row[bez_col]}` ➔ Inhalt: `{line}`")
+                                st.write(f"**Objekt:** {row[bez_col]} | **Spalte:** {echte_ziel_spalte} | **Text:** {line}")
 
                             if not any(k in line_lower for k in search_keywords):
                                 continue
@@ -500,7 +487,6 @@ elif "bericht" in current_uc_clean:
                                 date_str = f"{day}.{month}.{year}"
                                 try:
                                     entry_date = datetime.datetime.strptime(date_str, "%d.%m.%Y")
-                                    # Bei explizitem "offen"-Keyword hebeln wir den Zeitfilter aus, damit nichts verschwindet
                                     if "offen" not in line_lower and entry_date < stichtag:
                                         continue
                                 except:
@@ -514,6 +500,8 @@ elif "bericht" in current_uc_clean:
                                 "Information": clean_info
                             })
 
+            # REPARATUR LOGIK-FEHLER: Die Tabelle wird nur gerendert, wenn Zeilen da sind, 
+            # andernfalls erscheint die Info-Meldung – sauber getrennt.
             if report_rows:
                 df_report = pd.DataFrame(report_rows)
                 st.dataframe(df_report, use_container_width=True, hide_index=True)
