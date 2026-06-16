@@ -111,9 +111,10 @@ def call_gemini(prompt, context="", structured=True):
             res = client.models.generate_content(model="gemini-2.5-flash", contents=f"Kontext:\n{context}\n\nFrage: {prompt}", config=types.GenerateContentConfig(system_instruction=sys_instruction, temperature=0.2, response_mime_type="application/json", response_schema=KiAntwortSchema))
             data = json.loads(res.text)
             return KiAntwortSchema(wissensluecke_erkannt=bool(data.get("wissensluecke_erkannt", True)), antwort_text=str(data.get("antwort_text", "")))
-        return client.models.generate_content(model="gemini-2.5-flash", contents=prompt, config=types.GenerateContentConfig(system_instruction="Verfasse einen sachlichen Bericht basierend auf den Daten.", temperature=0.2)).text
+        
+        return client.models.generate_content(model="gemini-2.5-flash", contents=prompt, config=types.GenerateContentConfig(system_instruction="Du bist eine KI, du kannst aus einer kryptischen Zeile einen verständlichen Satz machen. Formuliere stichpunktartige Notizen oder Fragmente in einen eleganten, vollständigen, professionellen und fehlerfreien deutschen Berichtssatz um.", temperature=0.2)).text
     except:
-        return KiAntwortSchema(wissensluecke_erkannt=True, antwort_text="") if structured else "Fehler."
+        return KiAntwortSchema(wissensluecke_erkannt=True, antwort_text="") if structured else "Fehler bei Textaufbereitung."
 
 def extract_context_for_object(objekt_name):
     if df_wissen is None or df_lexikon is None or not objekt_name: return ""
@@ -213,7 +214,6 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
             if pwd.strip().lower() == str(r[p_pwd_col]).strip().lower():
                 st.session_state.host_authentifiziert = True
                 
-                # SPEZIFIKATION: Debug-Modus AUSSCHLIESSLICH bei Passwort "Admin"
                 if pwd.strip().lower() == "admin":
                     st.session_state.debug_modus_aktiv = True
                 else:
@@ -448,13 +448,8 @@ elif "bericht" in current_uc_clean:
                     if str(c).strip().lower() == str(ziel_spalte).strip().lower():
                         echte_ziel_spalte = c
                         break
-                if not echte_ziel_spalte:
-                    for c in df_wissen.columns:
-                        if "störung" in str(c).lower() or "defekt" in str(c).lower():
-                            if not str(c).lower().endswith("status"):
-                                echte_ziel_spalte = c
-                                break
 
+            # Hauptindikatoren für relevante Zeilen
             search_keywords = ["offen", "nicht"]
 
             if echte_ziel_spalte and df_wissen is not None:
@@ -465,46 +460,58 @@ elif "bericht" in current_uc_clean:
                         lines = [l.strip() for l in cell_val.split("\n") if l.strip()]
                         for line in lines:
                             line_lower = line.lower()
-                            
-                            # SPEZIFIKATION: Schlanke, einheitliche Formatierung im Debug-Modus (Passwort "Admin")
-                            if st.session_state.debug_modus_aktiv:
-                                st.write(f"**Objekt:** {row[bez_col]} | **Spalte:** {echte_ziel_spalte} | **Text:** {line}")
 
+                            # ==========================================================
+                            # IMPLEMENTIERUNG WEG A (ERST STATUS, DANN DATUM PRÜFEN)
+                            # ==========================================================
+                            
+                            # 1. Grobfilter nach Zustandswörtern
                             if not any(k in line_lower for k in search_keywords):
                                 continue
                                 
+                            # 2. Spezifischer Ziel-Filter (z.B. "offen" gefordert)
                             if target_keyword and target_keyword not in line_lower:
                                 continue
 
-                            # --- DATE-PARSER ---
-                            date_str = "Manuell / Offen"
+                            # 3. Datumsprüfung für die gefilterten Status-Zeilen
+                            ist_zeitraum_gueltig = True
                             match = re.search(r'(\d{1,2})[-./](\d{1,2})[-./](\d{4})', line)
                             
                             if match:
                                 day, month, year = match.group(1), match.group(2), match.group(3)
-                                day = day.zfill(2)
-                                month = month.zfill(2)
-                                date_str = f"{day}.{month}.{year}"
+                                date_str = f"{day.zfill(2)}.{month.zfill(2)}.{year}"
                                 try:
                                     entry_date = datetime.datetime.strptime(date_str, "%d.%m.%Y")
-                                    if "offen" not in line_lower and entry_date < stichtag:
-                                        continue
+                                    # Falls das extrahierte Datum älter ist als der Stichtag, überspringen
+                                    if entry_date < stichtag:
+                                        ist_zeitraum_gueltig = False
                                 except:
                                     pass
                             
+                            if not ist_zeitraum_gueltig:
+                                continue
+                            
+                            # Zeile ist valide -> Bereinigen für Ausgabe
                             clean_info = line.replace("[", "").replace("]", "").strip()
                             
+                            # SPEZIFIKATION: Schlanke Debug-Ausgabe NUR für Admin-Modus
+                            if st.session_state.debug_modus_aktiv:
+                                st.write(f"**Objekt:** {row[bez_col]} | **Spalte:** {echte_ziel_spalte} | **Text/Fehlermeldung:** {line}")
+                            
+                            # SPEZIFIKATION: KI-Textaufbereitung für den echten Bericht
+                            aufbereiteter_text = call_gemini(
+                                prompt=f"Formuliere folgende abgehackte Information in einen professionellen, flüssigen und grammatikalisch fehlerfreien deutschen Satz um. Beziehe das Objekt '{row[bez_col]}' logisch mit ein: {clean_info}",
+                                structured=False
+                            )
+                            
                             report_rows.append({
-                                "Objekt": str(row[bez_col]).strip(),
-                                "Datum": date_str,
-                                "Information": clean_info
+                                "Eintrag": aufbereiteter_text
                             })
 
-            # REPARATUR LOGIK-FEHLER: Die Tabelle wird nur gerendert, wenn Zeilen da sind, 
-            # andernfalls erscheint die Info-Meldung – sauber getrennt.
+            # VALIDIERUNG & AUSGABE DER ERGEBNISSE
             if report_rows:
-                df_report = pd.DataFrame(report_rows)
-                st.dataframe(df_report, use_container_width=True, hide_index=True)
+                for row_data in report_rows:
+                    st.write(row_data["Eintrag"])
             else:
                 st.info(f"Keine Einträge für '{st.session_state.selected_report_type}' im gewählten Zeitraum in der Matrix gefunden.")
     st.stop()
