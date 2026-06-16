@@ -82,7 +82,10 @@ def fetch_matrix_from_drive():
 
 if st.session_state.matrix_data is None:
     with st.spinner("Initialisiere geschützte Matrix-Daten..."):
-        fetch_matrix_from_drive()
+        erfolg = fetch_matrix_from_drive()
+        if not erfolg:
+            st.error("❌ Kritischer Fehler: Verbindung zu Google Drive fehlgeschlagen. Bitte Secrets prüfen.")
+            st.stop()
 
 df_wissen = st.session_state.matrix_data["wissen"] if st.session_state.matrix_data else None
 df_lexikon = st.session_state.matrix_data["lexikon"] if st.session_state.matrix_data else None
@@ -135,7 +138,7 @@ def extract_context_for_object(objekt_name):
     return st.session_state.last_extracted_context
 
 # ==============================================================================
-# 5. MATRIZEN-SCHREIBENGINE (STATUS IMMER 'OFFEN', SCHRIFTFARBE BLAU #1F4E78)
+# 5. MATRIZEN-SCHREIBENGINE (STATUS IMMER 'OFFEN')
 # ==============================================================================
 def execute_matrix_input_direct(physische_spalte, objekt, text):
     if drive_service is None or df_wissen is None: return
@@ -205,13 +208,15 @@ if not st.session_state.aktive_rolle: st.stop()
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     pwd = st.text_input("🔑 Passwort eingeben:", type="password")
     if pwd and df_passwoerter is not None:
-        p_rolle_col, p_pwd_col = df_passwoerter.columns[0], df_passwoerter.columns[1]
-        host_rows = df_passwoerter[df_passwoerter[p_rolle_col].astype(str).str.strip().str.lower() == str(df_passwoerter.iloc[0][p_rolle_col]).strip().lower()]
-        for _, r in host_rows.iterrows():
+        p_pwd_col = df_passwoerter.columns[1]
+        for _, r in df_passwoerter.iterrows():
             if pwd.strip() == str(r[p_pwd_col]).strip():
                 st.session_state.host_authentifiziert = True
-                if len(df_passwoerter.columns) > 2 and str(r[df_passwoerter.columns[2]]).strip().lower() == "debug":
-                    st.session_state.debug_modus_aktiv = True
+                # Maximale Toleranz beim Aktivieren des Debug-Modus (Spalte 3 prüfen)
+                if len(df_passwoerter.columns) > 2:
+                    db_val = str(r[df_passwoerter.columns[2]]).strip().lower()
+                    if "debug" in db_val or "admin" in db_val:
+                        st.session_state.debug_modus_aktiv = True
                 st.rerun()
     st.stop()
 
@@ -335,17 +340,17 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
 
 
 # ==============================================================================
-# 📊 GENERISCHE & DYNAMISCHE USE CASE BERICHTSENGINE (DYN-REGULIERUNG)
+# 📊 GENERISCHE & DYNAMISCHE USE CASE BERICHTSENGINE
 # ==============================================================================
 elif "bericht" in current_uc_clean:
     report_options = []
     mapping_dropdown_zu_lexikon_zeile = {}
 
     if df_lexikon is not None:
-        col_spaltenname = df_lexikon.columns[0]      # Spalte 1: Physischer Spaltenname
-        col_usecase = df_lexikon.columns[3]          # Spalte 4: Use Case ("Bericht")
-        col_regel = df_lexikon.columns[4]            # Spalte 5: Erwartetes Format / Regel
-        col_details = df_lexikon.columns[5]          # Spalte 6: Detail Bericht
+        col_spaltenname = df_lexikon.columns[0]
+        col_usecase = df_lexikon.columns[3]
+        col_regel = df_lexikon.columns[4]
+        col_details = df_lexikon.columns[5]
 
         mask_bericht = df_lexikon[col_usecase].astype(str).str.strip().str.lower() == "bericht"
         df_bericht_rows = df_lexikon[mask_bericht]
@@ -362,7 +367,6 @@ elif "bericht" in current_uc_clean:
                         "original_detail": raw_detail
                     }
 
-    # Absolute Fallsicherung bei fehlendem Lexikon-Mapping
     if not report_options:
         report_options = [
             "Offene Störungen", "Behobene Störungen", 
@@ -416,9 +420,7 @@ elif "bericht" in current_uc_clean:
             bez_col = df_wissen.columns[0] if df_wissen is not None else "Bezeichnung"
 
             lexikon_meta = mapping_dropdown_zu_lexikon_zeile.get(st.session_state.selected_report_type)
-            
-            ziel_spalte = None
-            target_keyword = None
+            ziel_spalte, target_keyword = None, None
             
             if lexikon_meta:
                 ziel_spalte = lexikon_meta["spalte_wissen"]
@@ -438,48 +440,45 @@ elif "bericht" in current_uc_clean:
                     ziel_spalte = "Keine Information"
                     target_keyword = "offen" if "offen" in rep_lower else "nicht"
 
-            # Filter-Zustände einschränken (Status 'aktiv' gibt es nicht mehr)
             search_keywords = ["offen", "nicht"]
 
             if ziel_spalte and df_wissen is not None and ziel_spalte in df_wissen.columns:
                 for _, row in df_wissen.iterrows():
                     cell_val = str(row[ziel_spalte]).strip() if pd.notna(row[ziel_spalte]) else ""
                     
-                    # Debug Modus exklusiv für den verifizierten Host einblenden
+                    # JETZT GEHT ES: Debug-Modus zeigt verlässlich den genauen Zellinhalt an!
                     if st.session_state.debug_modus_aktiv:
-                        st.write(f"🔍 DEBUG [Spalte: {ziel_spalte}] Prüfe {row[bez_col]}: {cell_val[:80]}...")
+                        st.write(f"⚙️ **DEBUG [Spalte: {ziel_spalte}]** Prüfe `{row[bez_col]}` ➔ Inhalt: `{cell_val}`")
 
                     if cell_val and cell_val.lower() != "nan":
                         lines = [l.strip() for l in cell_val.split("\n") if l.strip()]
                         for line in lines:
                             line_lower = line.lower()
                             
-                            # Überprüfung, ob eines der gültigen Status-Keywords im Text vorhanden ist
                             if not any(k in line_lower for k in search_keywords):
                                 continue
                                 
-                            # Zusätzlicher Check, ob das konkrete Ziel-Keyword des Berichts matched
                             if target_keyword and target_keyword not in line_lower:
                                 continue
 
-                            # --- FLEXIBLER DATE-PARSER (Regex-Suche nach dd.mm.yyyy, dd-mm-yyyy, dd/mm/yyyy) ---
+                            # --- DEFENSIVER & ELASTISCHER DATE-PARSER (\d{1,2} fängt ein- und zweistellige Werte ab) ---
                             date_str = "Manuell / Offen"
-                            # Sucht nach 2 Ziffern, gefolgt von einem Trenner (. oder - oder /), 2 Ziffern, Trenner, 4 Ziffern
-                            match = re.search(r'(\d{2})[-./](\d{2})[-./](\d{4})', line)
+                            match = re.search(r'(\d{1,2})[-./](\d{1,2})[-./](\d{4})', line)
                             
                             if match:
                                 day, month, year = match.group(1), match.group(2), match.group(3)
-                                # Vereinheitlichen für die spätere chronologische Sortierung und einheitliche HMI
+                                # Führende Nullen für eine einheitliche Optik und fehlerfreie Sortierung
+                                day = day.zfill(2)
+                                month = month.zfill(2)
                                 date_str = f"{day}.{month}.{year}"
                                 try:
                                     entry_date = datetime.datetime.strptime(date_str, "%d.%m.%Y")
-                                    # Wenn das Datum älter als der gewählte Zeithorizont ist, überspringen
+                                    # Defensiver Zeit-Check: Nur filtern, wenn das Datum erfolgreich bestimmt werden konnte
                                     if entry_date < stichtag:
                                         continue
                                 except:
-                                    pass # Bei Parsingfehler verbleibt das Element sicherheitshalber im Bericht
+                                    pass # Bei Fehler bleibt der Eintrag sicherheitshalber in der Tabelle
                             
-                            # Klammern für die finale Tabellenanzeige entfernen
                             clean_info = line.replace("[", "").replace("]", "").strip()
                             
                             report_rows.append({
@@ -490,7 +489,6 @@ elif "bericht" in current_uc_clean:
 
             if report_rows:
                 df_report = pd.DataFrame(report_rows)
-                # Hilfsspalte für korrekte chronologische Sortierung generieren
                 df_report["_sort_date"] = pd.to_datetime(df_report["Datum"], format="%d.%m.%Y", errors="coerce")
                 df_report = df_report.sort_values(by="_sort_date", ascending=False).drop(columns=["_sort_date"])
                 st.dataframe(df_report, use_container_width=True, hide_index=True)
