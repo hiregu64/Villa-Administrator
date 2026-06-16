@@ -210,13 +210,15 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
     if pwd and df_passwoerter is not None:
         p_pwd_col = df_passwoerter.columns[1]
         for _, r in df_passwoerter.iterrows():
-            if pwd.strip() == str(r[p_pwd_col]).strip():
+            if pwd.strip().lower() == str(r[p_pwd_col]).strip().lower():
                 st.session_state.host_authentifiziert = True
-                # Maximale Toleranz beim Aktivieren des Debug-Modus (Spalte 3 prüfen)
-                if len(df_passwoerter.columns) > 2:
-                    db_val = str(r[df_passwoerter.columns[2]]).strip().lower()
-                    if "debug" in db_val or "admin" in db_val:
-                        st.session_state.debug_modus_aktiv = True
+                
+                # SPEZIFIKATION: Debug-Modus wird hier exklusiv NUR bei Passwort "Admin" eingeschaltet!
+                if pwd.strip().lower() == "admin":
+                    st.session_state.debug_modus_aktiv = True
+                else:
+                    st.session_state.debug_modus_aktiv = False
+                    
                 st.rerun()
     st.stop()
 
@@ -346,6 +348,15 @@ elif "bericht" in current_uc_clean:
     report_options = []
     mapping_dropdown_zu_lexikon_zeile = {}
 
+    # SPEZIFIKATION: DEBUG-FENSTER WIRD EXKLUSIV NUR BEI AKTIVEM DEBUG-MODUS (PASSWORT "ADMIN") SICHTBAR
+    if st.session_state.debug_modus_aktiv:
+        st.warning("⚙️ **DEBUG MODE ACTIVE**")
+        if df_wissen is not None:
+            st.write("📂 Vorhandene Spalten in Excel-Wissensbasis:")
+            st.code(list(df_wissen.columns))
+            st.write("📄 Auszug der ersten Zeilen:")
+            st.dataframe(df_wissen.head(5))
+
     if df_lexikon is not None:
         col_spaltenname = df_lexikon.columns[0]
         col_usecase = df_lexikon.columns[3]
@@ -429,55 +440,71 @@ elif "bericht" in current_uc_clean:
                 rep_lower = st.session_state.selected_report_type.lower()
                 if "störung" in rep_lower:
                     ziel_spalte = "Störung / Defekt"
-                    target_keyword = "offen" if "offen" in rep_lower else "ok"
+                    target_keyword = "offen"
                 elif "wartung" in rep_lower:
                     ziel_spalte = "Wartung"
-                    target_keyword = "offen" if "offen" in rep_lower else "erfolgt"
+                    target_keyword = "offen"
                 elif "feedback" in rep_lower:
                     ziel_spalte = "Feedback Gast"
-                    target_keyword = "offen" if "offen" in rep_lower else "nicht"
+                    target_keyword = "offen"
                 elif "wissenslücke" in rep_lower or "information" in rep_lower:
                     ziel_spalte = "Keine Information"
-                    target_keyword = "offen" if "offen" in rep_lower else "nicht"
+                    target_keyword = "offen"
+
+            # Spaltenzuordnung (Groß-/Kleinschreibung ignorieren)
+            echte_ziel_spalte = None
+            if df_wissen is not None and ziel_spalte:
+                for c in df_wissen.columns:
+                    if str(c).strip().lower() == str(ziel_spalte).strip().lower():
+                        echte_ziel_spalte = c
+                        break
+                if not echte_ziel_spalte:
+                    for c in df_wissen.columns:
+                        if "störung" in str(c).lower() or "defekt" in str(c).lower():
+                            if not str(c).lower().endswith("status"):
+                                echte_ziel_spalte = c
+                                break
+
+            # DEBUG-AUSGABE DER GEFILTERTEN WERTE
+            if st.session_state.debug_modus_aktiv:
+                st.info(f"🔍 Scan-Parameter ➔ Spalte: `{echte_ziel_spalte}` | Keyword: `{target_keyword}`")
 
             search_keywords = ["offen", "nicht"]
 
-            if ziel_spalte and df_wissen is not None and ziel_spalte in df_wissen.columns:
+            if echte_ziel_spalte and df_wissen is not None:
                 for _, row in df_wissen.iterrows():
-                    cell_val = str(row[ziel_spalte]).strip() if pd.notna(row[ziel_spalte]) else ""
+                    cell_val = str(row[echte_ziel_spalte]).strip() if pd.notna(row[echte_ziel_spalte]) else ""
                     
-                    # JETZT GEHT ES: Debug-Modus zeigt verlässlich den genauen Zellinhalt an!
-                    if st.session_state.debug_modus_aktiv:
-                        st.write(f"⚙️ **DEBUG [Spalte: {ziel_spalte}]** Prüfe `{row[bez_col]}` ➔ Inhalt: `{cell_val}`")
-
                     if cell_val and cell_val.lower() != "nan":
                         lines = [l.strip() for l in cell_val.split("\n") if l.strip()]
                         for line in lines:
                             line_lower = line.lower()
                             
+                            if st.session_state.debug_modus_aktiv:
+                                st.write(f"🔬 Zeile: `{row[bez_col]}` ➔ Inhalt: `{line}`")
+
                             if not any(k in line_lower for k in search_keywords):
                                 continue
                                 
                             if target_keyword and target_keyword not in line_lower:
                                 continue
 
-                            # --- DEFENSIVER & ELASTISCHER DATE-PARSER (\d{1,2} fängt ein- und zweistellige Werte ab) ---
+                            # --- DATE-PARSER ---
                             date_str = "Manuell / Offen"
                             match = re.search(r'(\d{1,2})[-./](\d{1,2})[-./](\d{4})', line)
                             
                             if match:
                                 day, month, year = match.group(1), match.group(2), match.group(3)
-                                # Führende Nullen für eine einheitliche Optik und fehlerfreie Sortierung
                                 day = day.zfill(2)
                                 month = month.zfill(2)
                                 date_str = f"{day}.{month}.{year}"
                                 try:
                                     entry_date = datetime.datetime.strptime(date_str, "%d.%m.%Y")
-                                    # Defensiver Zeit-Check: Nur filtern, wenn das Datum erfolgreich bestimmt werden konnte
-                                    if entry_date < stichtag:
+                                    # Bei explizitem "offen"-Keyword hebeln wir den Zeitfilter aus, damit nichts verschwindet
+                                    if "offen" not in line_lower and entry_date < stichtag:
                                         continue
                                 except:
-                                    pass # Bei Fehler bleibt der Eintrag sicherheitshalber in der Tabelle
+                                    pass
                             
                             clean_info = line.replace("[", "").replace("]", "").strip()
                             
@@ -489,11 +516,9 @@ elif "bericht" in current_uc_clean:
 
             if report_rows:
                 df_report = pd.DataFrame(report_rows)
-                df_report["_sort_date"] = pd.to_datetime(df_report["Datum"], format="%d.%m.%Y", errors="coerce")
-                df_report = df_report.sort_values(by="_sort_date", ascending=False).drop(columns=["_sort_date"])
                 st.dataframe(df_report, use_container_width=True, hide_index=True)
             else:
-                st.info(f"Keine Einträge für '{st.session_state.selected_report_type}' im gewählten Zeitraum gefunden.")
+                st.info(f"Keine Einträge für '{st.session_state.selected_report_type}' im gewählten Zeitraum in der Matrix gefunden.")
     st.stop()
 
 
