@@ -14,7 +14,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 # ==============================================================================
-# 1. KI-STRUKTUR & KONFIGURATION
+# 1. STRUKTUREN & PARAMETER
 # ==============================================================================
 class KiAntwortSchema(BaseModel):
     wissensluecke_erkannt: bool = Field(description="True bei unvollständigem Excel-Kontext.")
@@ -34,7 +34,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Session State flach initialisieren
+# Session States absolut sauber und flach initialisieren
 for key, value in [
     ("aktive_rolle", None), ("aktiver_use_case", None), ("selected_object", None), 
     ("selected_field", None), ("messages", []), ("host_authentifiziert", False), 
@@ -43,32 +43,44 @@ for key, value in [
     ("erfolgsmeldung_anzeigen", None), ("host_text_wert", ""),
     ("selected_report_type", None), ("selected_report_timeframe", None)
 ]:
-    if key not in st.session_state: st.session_state[key] = value
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 # ==============================================================================
-# 2. DATEN-LADE ENGINE (GOOGLE DRIVE ADAPTER)
+# 2. AUSFALLSICHERE DATEN-LADE ENGINE (VERHINDERT PERMANENTEN SPINNER)
 # ==============================================================================
 def fetch_matrix_from_drive():
     try:
+        if "GOOGLE_CREDENTIALS" not in st.secrets:
+            st.error("❌ Kritischer Fehler: 'GOOGLE_CREDENTIALS' nicht in Streamlit Secrets gefunden.")
+            return False
+            
         creds = service_account.Credentials.from_service_account_info(st.secrets["GOOGLE_CREDENTIALS"])
         service = build('drive', 'v3', credentials=creds)
+        
         fh = io.BytesIO()
         MediaIoBaseDownload(fh, service.files().get_media(fileId=FILE_ID)).next_chunk()
         fh.seek(0)
+        
+        # Blätter laden mit Sicherheitsprüfung
         df_wissen = pd.read_excel(fh, sheet_name="Wissensbasis", header=0)
         fh.seek(0)
         df_lexikon = pd.read_excel(fh, sheet_name="Spalten_Lexikon", header=0)
         fh.seek(0)
         df_usecases = pd.read_excel(fh, sheet_name="UseCase_Lexikon", header=0)
         fh.seek(0)
-        try: df_passwoerter = pd.read_excel(fh, sheet_name="Passwort_Lexikon", header=0)
-        except: df_passwoerter = None
+        
+        try: 
+            df_passwoerter = pd.read_excel(fh, sheet_name="Passwort_Lexikon", header=0)
+        except: 
+            df_passwoerter = None
         
         if df_wissen is not None and "Wo?" in df_wissen.columns: 
             df_wissen["Wo?"] = df_wissen["Wo?"].ffill()
             
         for df in [df_usecases, df_passwoerter, df_wissen, df_lexikon]:
-            if df is not None: df.columns = [str(c).strip() for c in df.columns]
+            if df is not None: 
+                df.columns = [str(c).strip() for c in df.columns]
             
         st.session_state.matrix_data = {
             "wissen": df_wissen, "lexikon": df_lexikon, 
@@ -76,16 +88,22 @@ def fetch_matrix_from_drive():
         }
         return True
     except Exception as e:
-        st.error(f"Synchronisations-Fehler: {e}")
+        st.error(f"❌ Synchronisations-Fehler beim Laden von Google Drive: {e}")
         return False
 
+# Falls Matrix-Daten fehlen, versuchen zu laden
 if st.session_state.matrix_data is None:
     with st.spinner("Verbindung zur Excel-Zentralmatrix wird hergestellt..."):
         erfolg = fetch_matrix_from_drive()
-        if not erfolg:
-            st.error("❌ Kritischer Fehler: Daten konnten nicht geladen werden.")
+        if erfolg:
+            st.rerun()
+        else:
+            st.warning("⚠️ Die App konnte die Daten nicht laden. Bitte überprüfe die Google-Drive-Berechtigungen oder Secrets.")
+            if st.button("🔄 Erneut versuchen"):
+                st.rerun()
             st.stop()
 
+# Zuweisung nach erfolgreichem Laden
 df_wissen = st.session_state.matrix_data["wissen"]
 df_lexikon = st.session_state.matrix_data["lexikon"]
 df_usecases = st.session_state.matrix_data["usecases"]
@@ -116,11 +134,12 @@ def parse_status_history(status_val):
     return parsed
 
 # ==============================================================================
-# 4. LLM API ENGINE
+# 4. LLM KI-ENGINE
 # ==============================================================================
 def call_gemini(prompt, context="", structured=True):
     client = genai.Client(api_key=st.secrets.get("GEMINI_API_KEY")) if "GEMINI_API_KEY" in st.secrets else None
-    if not client: return "KI nicht konfiguriert." if not structured else KiAntwortSchema(wissensluecke_erkannt=True, antwort_text="")
+    if not client: 
+        return "KI nicht konfiguriert." if not structured else KiAntwortSchema(wissensluecke_erkannt=True, antwort_text="")
     
     sys_instruction = "Du bist „Villa Avatar“. Antworte kurz, präzise, smartphone-optimiert. Nutze den Excel-Kontext intelligent. Erwähne niemals Tabellenstrukturen."
     try:
@@ -156,7 +175,7 @@ def extract_context_for_object(objekt_name):
     return st.session_state.last_extracted_context
 
 # ==============================================================================
-# 5. MATRIZEN-SCHREIBENGINE (SPEZIFIKATIONSKONFORME DATA PIPELINE)
+# 5. MATRIZEN-SCHREIBENGINE (REINER TEXT / DATUM+STATUS IN STATUSSPALTE)
 # ==============================================================================
 def execute_matrix_input_direct(physische_spalte, objekt, text):
     if drive_service is None or df_wissen is None: return
@@ -176,7 +195,7 @@ def execute_matrix_input_direct(physische_spalte, objekt, text):
             
         col_idx = find_column_by_fuzzy_name(headers, physische_spalte)
         if col_idx:
-            # 1. Text als Historie rein in die Haupttextspalte (ohne Zeitstempel im Text)
+            # 1. Reiner Text in die Haupttextspalte (mehrzeilig angehängt)
             old_text = ws.cell(row_idx, col_idx).value or ""
             if old_text:
                 ws.cell(row_idx, col_idx).value = f"{str(old_text).strip()}\n{text}".strip()
@@ -186,7 +205,7 @@ def execute_matrix_input_direct(physische_spalte, objekt, text):
             ws.cell(row_idx, col_idx).alignment = Alignment(wrap_text=True)
             ws.cell(row_idx, col_idx).font = Font(color="1F4E78", bold=False)
             
-            # 2. Status und Erstellungsdatum rein in die Statusspalte (Format: DD.MM.YYYY Zustand)
+            # 2. Datum + Status in die dedizierte Statusspalte
             status_idx = find_column_by_fuzzy_name(headers, f"{physische_spalte} Status")
             if status_idx:
                 old_status = ws.cell(row_idx, status_idx).value or ""
@@ -203,22 +222,32 @@ def execute_matrix_input_direct(physische_spalte, objekt, text):
             drive_service.files().update(fileId=FILE_ID, media_body=MediaIoBaseUpload(out, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')).execute()
             st.session_state.last_write_status = f"✅ ERFOLG: Spalte '{physische_spalte}' beschrieben."
             st.toast("✅ Matrix aktualisiert!")
-    except Exception as e: st.error(f"Schreibfehler: {e}")
+    except Exception as e: 
+        st.error(f"Schreibfehler: {e}")
 
 def execute_matrix_input(use_case, objekt, text):
     if df_lexikon is None: return
     spalte = next((str(r[df_lexikon.columns[0]]).strip() for _, r in df_lexikon.iterrows() if use_case.lower().strip() in [t.strip().lower() for t in str(r[df_lexikon.columns[4]]).split(',')]), None)
-    if not spalte and use_case == "Keine Information": spalte = next((c for c in df_wissen.columns if "information" in c.lower() and "status" not in c.lower()), None)
-    if spalte: execute_matrix_input_direct(spalte, objekt, text)
+    if not spalte and use_case == "Keine Information": 
+        spalte = next((c for c in df_wissen.columns if "information" in c.lower() and "status" not in c.lower()), None)
+    if spalte: 
+        execute_matrix_input_direct(spalte, objekt, text)
 
 # ==============================================================================
-# 6. HMI PRESENTATION LAYER (BENUTZEROBERFLÄCHE)
+# 6. HMI PRESENTATION LAYER
 # ==============================================================================
 st.title("☀️ Villa Avatar")
 
+# Admin Sidebar Reset-Möglichkeit bei Blockaden
+if st.sidebar.button("🧹 Session State zurücksetzen"):
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
+
 if st.session_state.aktive_rolle == "Host" and st.sidebar.button("🔄 Matrix neu laden"):
     st.cache_data.clear()
-    if fetch_matrix_from_drive(): st.sidebar.success("Matrix frisch geladen!")
+    if fetch_matrix_from_drive(): 
+        st.sidebar.success("Matrix frisch geladen!")
 
 role = st.selectbox("Rolle", options=["Gast", "Host"], index=None, placeholder="Wer bist du?", label_visibility="collapsed")
 if role and role != st.session_state.aktive_rolle:
@@ -230,7 +259,8 @@ if role and role != st.session_state.aktive_rolle:
     st.session_state.selected_report_timeframe = None
     st.rerun()
 
-if not st.session_state.aktive_rolle: st.stop()
+if not st.session_state.aktive_rolle: 
+    st.stop()
 
 # Host Authentifizierung
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
@@ -244,7 +274,7 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
                 st.rerun()
     st.stop()
 
-# Use-Case Menüleiste rendern
+# Use-Case Navigationsleiste generieren
 if df_usecases is not None:
     uc_col, hmi_col = df_usecases.columns[0], df_usecases.columns[2]
     allowed = [uc for uc in df_usecases[df_usecases[hmi_col].astype(str).str.lower().str.strip() == "ja"][uc_col].tolist() if st.session_state.aktive_rolle == "Host" or any(x in uc.lower() for x in ["hilfe", "störung", "feedback"])]
@@ -263,7 +293,8 @@ if df_usecases is not None:
                 st.session_state.selected_report_timeframe = None
                 st.rerun()
 
-if not st.session_state.aktiver_use_case: st.stop()
+if not st.session_state.aktiver_use_case: 
+    st.stop()
 
 # ==============================================================================
 # 🎯 USE CASE: INFORMATIONSMATRIX-ANSICHT (MANUELLER HOST-INPUT)
@@ -314,7 +345,8 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
         
         if st.session_state.selected_field:
             txt = st.text_area("Inhalt erfassen", value=st.session_state["host_text_wert"], placeholder="Hier den Text eingeben...", label_visibility="collapsed", key="host_text_eingabe")
-            if txt != st.session_state["host_text_wert"]: st.session_state["host_text_wert"] = txt
+            if txt != st.session_state["host_text_wert"]: 
+                st.session_state["host_text_wert"] = txt
 
             if st.button("💾 In Excel-Zentralmatrix speichern", type="primary") and txt.strip():
                 execute_matrix_input_direct(st.session_state.selected_field, st.session_state.selected_object, txt.strip())
@@ -332,7 +364,7 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
     st.stop()
 
 # ==============================================================================
-# 📊 USE CASE: BERICHTSENGINE (SPEZIFIKATIONSKONFORM: STATUSSPALTEN-PARSING)
+# 📊 USE CASE: BERICHTSENGINE (SPEZIFIKATIONSKONFORM: STATUSSPALTEN-FILTERUNG)
 # ==============================================================================
 elif "bericht" in current_uc_clean:
     report_options = []
@@ -411,16 +443,17 @@ elif "bericht" in current_uc_clean:
                         if not haupt_text or haupt_text.lower() == "nan": continue
                         
                         aufbereiteter_text = call_gemini(
-                            prompt=f"Formuliere folgende historische Text-Informationen in einen professionellen, flüssigen deutschen Berichtssatz um. Beziehe das Objekt '{row[bez_col]}' logisch mit ein: {haupt_text}",
+                            prompt=f"Formuliere folgende historische Text-Informationen in einen professionellen, flüssigen deutschen Berichtssatz um. Beziehe das Web-Objekt '{row[bez_col]}' logisch mit ein: {haupt_text}",
                             structured=False
                         )
                         report_rows.append({"Eintrag": aufbereiteter_text})
 
             if report_rows:
                 st.markdown("---")
-                for row_data in report_rows: st.write(row_data["Eintrag"])
+                for row_data in report_rows: 
+                    st.write(row_data["Eintrag"])
             else:
-                st.info(f"Keine Einträge für '{st.session_state.selected_report_type}' im gewählten Zeitraum in der Matrix gefunden.")
+                st.info(f"Keine Einträge für '{st.session_state.selected_report_type}' im gewählten Zeitraum in der Zentralmatrix gefunden.")
     st.stop()
 
 # ==============================================================================
@@ -450,7 +483,8 @@ else:
     if aktuell_gewaehlt and aktuell_gewaehlt != st.session_state.selected_object:
         st.session_state.selected_object = aktuell_gewaehlt; st.session_state.messages = []; st.rerun()
 
-    if not st.session_state.selected_object: st.stop()
+    if not st.session_state.selected_object: 
+        st.stop()
 
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]): st.markdown(msg["content"])
