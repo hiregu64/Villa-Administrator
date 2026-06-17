@@ -317,4 +317,209 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
 
     if val_innen and val_innen != st.session_state.selected_object:
         st.session_state.selected_object = val_innen; st.session_state.selected_field = None; st.session_state["erfolgsmeldung_anzeigen"] = None; st.rerun()
-    elif val_aussen and val_aussen
+    elif val_aussen and val_aussen != st.session_state.selected_object:
+        st.session_state.selected_object = val_aussen; st.session_state.selected_field = None; st.session_state["erfolgsmeldung_anzeigen"] = None; st.rerun()
+    elif val_naehe and val_naehe != st.session_state.selected_object:
+        st.session_state.selected_object = val_naehe; st.session_state.selected_field = None; st.session_state["erfolgsmeldung_anzeigen"] = None; st.rerun()
+
+    if st.session_state.selected_object:
+        if df_lexikon is not None:
+            lexikon_spalten = df_lexikon[df_lexikon.columns[0]].dropna().astype(str).str.strip().tolist()
+            options_spalten = [col for col in lexikon_spalten if col.lower() not in ["spaltenname", "bezeichnung", "wo?", "relevanz gast", "system", "objekt"] and not col.lower().endswith("status")]
+        else:
+            options_spalten = [c for c in df_wissen.columns if c.lower() not in ["bezeichnung", "wo?", "id", "kategorie", "relevanz gast", "system"] and not c.lower().endswith("status")]
+
+        default_idx = options_spalten.index(st.session_state.selected_field) if st.session_state.selected_field in options_spalten else None
+        s_auswahl = st.selectbox("Art der Information", options=options_spalten, index=default_idx, placeholder="Bitte wähle die Art der Information aus", key="dropdown_neue_info_spalte_clean", label_visibility="collapsed")
+        
+        if s_auswahl and s_auswahl != st.session_state.selected_field:
+            st.session_state.selected_field = s_auswahl; st.session_state["erfolgsmeldung_anzeigen"] = None; st.rerun()
+        
+        if st.session_state.selected_field:
+            txt = st.text_area("Inhalt erfassen", value=st.session_state["host_text_wert"], placeholder="Hier den Text eingeben...", label_visibility="collapsed", key="host_text_eingabe")
+            if txt != st.session_state["host_text_wert"]: st.session_state["host_text_wert"] = txt
+
+            if st.button("💾 In Excel-Zentralmatrix speichern", type="primary") and txt.strip():
+                execute_matrix_input_direct(st.session_state.selected_field, st.session_state.selected_object, txt.strip())
+                danke_text = "Vielen Dank für deine Information."
+                if df_usecases is not None:
+                    uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == current_uc_clean]
+                    if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]):
+                        danke_text = str(uc_row.iloc[0][df_usecases.columns[5]]).strip()
+                st.session_state["erfolgsmeldung_anzeigen"] = danke_text
+                st.session_state["host_text_wert"] = ""
+                st.rerun()
+
+            if "erfolgsmeldung_anzeigen" in st.session_state and st.session_state["erfolgsmeldung_anzeigen"]:
+                st.success(st.session_state["erfolgsmeldung_anzeigen"])
+    st.stop()
+
+# ==============================================================================
+# 📊 USE CASE: BERICHTSENGINE
+# ==============================================================================
+elif "bericht" in current_uc_clean:
+    report_options = []
+    mapping_dropdown_zu_lexikon_zeile = {}
+
+    if df_lexikon is not None:
+        col_spaltenname, col_usecase, col_regel, col_details = df_lexikon.columns[0], df_lexikon.columns[3], df_lexikon.columns[4], df_lexikon.columns[5]
+        df_bericht_rows = df_lexikon[df_lexikon[col_usecase].astype(str).str.strip().str.lower() == "bericht"]
+
+        for _, row_lex in df_bericht_rows.iterrows():
+            raw_detail = str(row_lex[col_details]).strip()
+            if raw_detail and raw_detail.lower() != "nan":
+                clean_opt = raw_detail.split("(")[0].strip()
+                if clean_opt and clean_opt not in report_options:
+                    report_options.append(clean_opt)
+                    mapping_dropdown_zu_lexikon_zeile[clean_opt] = {
+                        "spalte_wissen": str(row_lex[col_spaltenname]).strip(),
+                        "such_zustand": str(row_lex[col_regel]).strip().lower()
+                    }
+
+    if not report_options:
+        report_options = ["Offene Störungen", "Behobene Störungen", "Offene Wartungen", "Erfolgte Wartungen", "Offenes Feedback", "Behobenes Feedback", "Offene Wissenslücken"]
+
+    idx_report = report_options.index(st.session_state.selected_report_type) if st.session_state.selected_report_type in report_options else None
+    selected_rep = st.selectbox("Berichtsart", options=report_options, index=idx_report, placeholder="Bitte wähle die Art des Berichtes.", label_visibility="collapsed", key="report_type_dropdown")
+    
+    if selected_rep != st.session_state.selected_report_type:
+        st.session_state.selected_report_type = selected_rep; st.rerun()
+
+    if st.session_state.selected_report_type:
+        timeframe_options = ["1 Woche", "1 Monat", "3 Monate", "1 Jahr"]
+        idx_timeframe = timeframe_options.index(st.session_state.selected_report_timeframe) if st.session_state.selected_report_timeframe in timeframe_options else None
+        selected_tf = st.selectbox("Zeitraum", options=timeframe_options, index=idx_timeframe, placeholder="Bitte wähle den Zeitraum.", label_visibility="collapsed", key="report_timeframe_dropdown")
+        
+        if selected_tf != st.session_state.selected_report_timeframe:
+            st.session_state.selected_report_timeframe = selected_tf; st.rerun()
+
+        if st.session_state.selected_report_timeframe:
+            st.markdown(f"### 📋 {st.session_state.selected_report_type} ({st.session_state.selected_report_timeframe})")
+
+            if st.session_state.debug_modus_aktiv:
+                st.success("⚙️ **Debug Mode Aktiv (Eingeloggt als admin)**")
+                st.write("Verfügbare Excel-Spalten in der Wissensbasis:", list(df_wissen.columns))
+
+            heute = datetime.datetime.now()
+            delta_days = {"1 Woche": 7, "1 Monat": 30, "3 Monate": 90, "1 Jahr": 365}.get(st.session_state.selected_report_timeframe, 30)
+            stichtag = heute - datetime.timedelta(days=delta_days)
+
+            report_rows = []
+            bez_col = df_wissen.columns[0]
+            lexikon_meta = mapping_dropdown_zu_lexikon_zeile.get(st.session_state.selected_report_type)
+            
+            ziel_spalte, target_keyword = None, "offen"
+            if lexikon_meta:
+                ziel_spalte = lexikon_meta["spalte_wissen"]
+                target_keyword = lexikon_meta["such_zustand"]
+            else:
+                rep_lower = st.session_state.selected_report_type.lower()
+                if "störung" in rep_lower: ziel_spalte = "Störung"
+                elif "wartung" in rep_lower: ziel_spalte = "Wartung"
+                elif "feedback" in rep_lower: ziel_spalte = "Feedback"
+                elif "wissenslücke" in rep_lower: ziel_spalte = "Keine Information"
+                if "behoben" in rep_lower or "erfolgt" in rep_lower: target_keyword = "ok"
+
+            echte_ziel_spalte = next((c for c in df_wissen.columns if str(c).strip().lower() == str(ziel_spalte).strip().lower()), None)
+            echte_status_spalte = next((c for c in df_wissen.columns if str(c).strip().lower() == f"{str(echte_ziel_spalte).strip().lower()} status"), None)
+
+            if st.session_state.debug_modus_aktiv:
+                st.write(f"Gesuchte Text-Spalte: `{ziel_spalte}` -> Gefunden in Matrix: `{echte_ziel_spalte}`")
+                st.write(f"Gesuchte Status-Spalte: `{ziel_spalte} Status` -> Gefunden in Matrix: `{echte_status_spalte}`")
+
+            if echte_ziel_spalte and echte_status_spalte:
+                for idx, row in df_wissen.iterrows():
+                    status_val = str(row[echte_status_spalte]).strip() if pd.notna(row[echte_status_spalte]) else ""
+                    
+                    if st.session_state.debug_modus_aktiv and status_val and status_val.lower() != "nan":
+                        st.write(f"Zeile {idx} ({row[bez_col]}): Status-Rohwert = `{status_val}`")
+                        
+                    if not status_val or status_val.lower() == "nan": continue
+                    
+                    events = parse_status_history(status_val)
+                    
+                    if events:
+                        letztes_event = events[-1]
+                        
+                        if st.session_state.debug_modus_aktiv:
+                            st.write(f"  ↳ Letztes Ereignis erkannt: Datum={letztes_event['datum'].strftime('%d.%m.%Y')}, Zustand=`{letztes_event['zustand']}`")
+                        
+                        if letztes_event["zustand"] == target_keyword.lower() and letztes_event["datum"] >= stichtag:
+                            haupt_text = str(row[echte_ziel_spalte]).strip() if pd.notna(row[echte_ziel_spalte]) else ""
+                            if not haupt_text or haupt_text.lower() == "nan": continue
+                            
+                            # Optimierter, strikter Prompt ohne Optionen-Ausgabe
+                            aufbereiteter_text = call_gemini(
+                                prompt=f"Bringe folgende Information für das Objekt '{row[bez_col]}' in 1 bis maximal 2 verständliche, rein sachliche Berichtssätze. Generiere KEINE Einleitungen, KEINE Optionen, KEINE Auswahlmöglichkeiten und keine Metatexte. Text: {haupt_text}",
+                                structured=False
+                            )
+                            report_rows.append({"Eintrag": aufbereiteter_text})
+
+            # Einheitliche, saubere Listen-Ausgabe
+            if report_rows:
+                st.markdown("---")
+                st.markdown(f"**Diese {st.session_state.selected_report_type.lower()} sind gemeldet:**")
+                for row_data in report_rows: 
+                    st.markdown(f"- {row_data['Eintrag']}")
+            else:
+                st.info("Keine Einträge für diesen Zeitraum gefunden.")
+    st.stop()
+
+# ==============================================================================
+# 7. CHAT & INPUT INTERFACE
+# ==============================================================================
+else:
+    uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == current_uc_clean]
+    direction = str(uc_row.iloc[0][df_usecases.columns[1]]).strip().upper() if not uc_row.empty else "OUTPUT"
+    fragetext = str(uc_row.iloc[0][df_usecases.columns[4]]).strip() if not uc_row.empty and len(df_usecases.columns) > 4 and pd.notna(uc_row.iloc[0][df_usecases.columns[4]]) else "Wie kann ich helfen?"
+    danke_tmpl = str(uc_row.iloc[0][df_usecases.columns[5]]).strip() if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]) else "Danke!"
+
+    bez_col, kat_col = df_wissen.columns[0], ("Wo?" if "Wo?" in df_wissen.columns else df_wissen.columns[1])
+    def get_liste(pattern):
+        mask = df_wissen[kat_col].astype(str).str.contains(pattern, case=False, na=False)
+        if st.session_state.aktive_rolle == "Gast" and "Relevanz Gast" in df_wissen.columns:
+            mask = mask & (df_wissen["Relevanz Gast"].astype(str).str.strip().str.lower() == "x")
+        return sorted(df_wissen[mask][bez_col].dropna().drop_duplicates().astype(str).str.strip().tolist())
+
+    tab_innen, tab_aussen, tab_naehe = st.tabs(["🏠 Ausstattung innen", "🌳 Ausstattung außen", "📍 In der Nähe"])
+
+    with tab_innen: val_innen = st.selectbox("Ausstattung innen", options=get_liste("innen"), index=None, placeholder="Bitte wähle das Objekt aus.", key="g_innen", label_visibility="collapsed")
+    with tab_aussen: val_aussen = st.selectbox("Ausstattung außen", options=get_liste("außen|aussen"), index=None, placeholder="Bitte wähle das Objekt aus.", key="g_aussen", label_visibility="collapsed")
+    with tab_naehe: val_naehe = st.selectbox("In der Nähe", options=get_liste("nähe|naehe"), index=None, placeholder="Bitte wähle das Objekt aus.", key="g_naehe", label_visibility="collapsed")
+
+    aktuell_gewaehlt = val_innen or val_aussen or val_naehe
+
+    if aktuell_gewaehlt and aktuell_gewaehlt != st.session_state.selected_object:
+        st.session_state.selected_object = aktuell_gewaehlt; st.session_state.messages = []; st.rerun()
+
+    if not st.session_state.selected_object: st.stop()
+
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]): st.markdown(msg["content"])
+        
+    if user_input := st.chat_input(fragetext):
+        st.session_state.messages.append({"role": "user", "content": user_input}); st.rerun()
+        
+    if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+        u_text = st.session_state.messages[-1]["content"]
+        is_not_found = "nicht gefunden" in st.session_state.selected_object.lower()
+        
+        if direction == "OUTPUT":
+            if is_not_found:
+                st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
+                execute_matrix_input("Keine Information", st.session_state.selected_object, u_text)
+            else:
+                with st.spinner("Antwort wird generiert..."):
+                    res = call_gemini(u_text, extract_context_for_object(st.session_state.selected_object))
+                    if res.wissensluecke_erkannt or not res.antwort_text or any(p in res.antwort_text.lower() for p in ["keine information", "weiß ich nicht", "leider nein"]):
+                        st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
+                        execute_matrix_input("Keine Information", st.session_state.selected_object, u_text)
+                    else:
+                        st.session_state.messages.append({"role": "assistant", "content": res.antwort_text})
+            st.rerun()
+            
+        elif direction == "INPUT":
+            with st.spinner("Eintrag wird protokoliert..."):
+                execute_matrix_input(st.session_state.aktiver_use_case, st.session_state.selected_object, u_text)
+                st.session_state.messages.append({"role": "assistant", "content": danke_tmpl.replace("{use_case}", st.session_state.aktiver_use_case)})
+                st.rerun()
