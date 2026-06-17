@@ -112,7 +112,8 @@ def parse_status_history(status_val):
     
     raw_str = str(status_val).replace('\n', ' ')
     
-    pattern = r'(\d{1,2}\.\d{1,2}\.\d{4})(?:\s+\d{2}:\d{2})?[\s\:\-\(]*(offen|ok|behoben|erfolgt|geschlossen|aktiv)'
+    # Tolerantes Pattern: Erlaubt beliebigen Text (wie "(Gast):") zwischen Datum/Uhrzeit und dem Status
+    pattern = r'(\d{1,2}\.\d{1,2}\.\d{4})(?:\s+\d{2}:\d{2})?.*?\b(offen|ok|behoben|erfolgt|geschlossen|aktiv)\b'
     matches = re.findall(pattern, raw_str, re.IGNORECASE)
     
     parsed = []
@@ -521,5 +522,7 @@ else:
         elif direction == "INPUT":
             with st.spinner("Eintrag wird protokoliert..."):
                 execute_matrix_input(st.session_state.aktiver_use_case, st.session_state.selected_object, u_text)
+                st.session_state.messages.append({"role": "assistant", "content": danke_tmpl.replace("{use_case}", st.session_state.aktiver_use_case)})
+                st.rerun()
                 st.session_state.messages.append({"role": "assistant", "content": danke_tmpl.replace("{use_case}", st.session_state.aktiver_use_case)})
                 st.rerun()
