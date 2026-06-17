@@ -14,7 +14,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 # ==============================================================================
-# 1. STRUCTURATED OUTPUT SCHEMA & CONFIG
+# 1. KI-STRUKTUR & KONFIGURATION
 # ==============================================================================
 class KiAntwortSchema(BaseModel):
     wissensluecke_erkannt: bool = Field(description="True bei unvollständigem Excel-Kontext.")
@@ -25,6 +25,7 @@ FALLBACK_SATZ = "Ich habe dazu leider keine Informationen, Ich gebe das aber ger
 
 st.set_page_config(page_title="Villa Avatar", page_icon="☀️", layout="centered")
 
+# CSS Styling für Chat und Buttons
 st.markdown("""
     <style>
     div.stButton > button[kind="primary"] { background-color: #e3f2fd !important; color: #1565c0 !important; border: 1px solid #bbdefb !important; font-weight: bold !important; }
@@ -45,7 +46,7 @@ for key, value in [
     if key not in st.session_state: st.session_state[key] = value
 
 # ==============================================================================
-# 2. DATEN-LADE ENGINE
+# 2. DATEN-LADE ENGINE (GOOGLE DRIVE ADAPTER)
 # ==============================================================================
 def fetch_matrix_from_drive():
     try:
@@ -79,10 +80,10 @@ def fetch_matrix_from_drive():
         return False
 
 if st.session_state.matrix_data is None:
-    with st.spinner("Initialisiere Matrix-Daten..."):
+    with st.spinner("Verbindung zur Excel-Zentralmatrix wird hergestellt..."):
         erfolg = fetch_matrix_from_drive()
         if not erfolg:
-            st.error("❌ Kritischer Fehler: Verbindung zu Google Drive fehlgeschlagen.")
+            st.error("❌ Kritischer Fehler: Daten konnten nicht geladen werden.")
             st.stop()
 
 df_wissen = st.session_state.matrix_data["wissen"]
@@ -115,7 +116,7 @@ def parse_status_history(status_val):
     return parsed
 
 # ==============================================================================
-# 4. API ENGINE
+# 4. LLM API ENGINE
 # ==============================================================================
 def call_gemini(prompt, context="", structured=True):
     client = genai.Client(api_key=st.secrets.get("GEMINI_API_KEY")) if "GEMINI_API_KEY" in st.secrets else None
@@ -155,7 +156,7 @@ def extract_context_for_object(objekt_name):
     return st.session_state.last_extracted_context
 
 # ==============================================================================
-# 5. MATRIZEN-SCHREIBENGINE (TRENNUNG TEXT & STATUS LAUT SPEZIFIKATION)
+# 5. MATRIZEN-SCHREIBENGINE (SPEZIFIKATIONSKONFORME DATA PIPELINE)
 # ==============================================================================
 def execute_matrix_input_direct(physische_spalte, objekt, text):
     if drive_service is None or df_wissen is None: return
@@ -175,7 +176,7 @@ def execute_matrix_input_direct(physische_spalte, objekt, text):
             
         col_idx = find_column_by_fuzzy_name(headers, physische_spalte)
         if col_idx:
-            # 1. Text als Historie rein in die Haupttextspalte (mehrzeilig ohne Zeitstempel im Text)
+            # 1. Text als Historie rein in die Haupttextspalte (ohne Zeitstempel im Text)
             old_text = ws.cell(row_idx, col_idx).value or ""
             if old_text:
                 ws.cell(row_idx, col_idx).value = f"{str(old_text).strip()}\n{text}".strip()
@@ -211,7 +212,7 @@ def execute_matrix_input(use_case, objekt, text):
     if spalte: execute_matrix_input_direct(spalte, objekt, text)
 
 # ==============================================================================
-# 6. HMI PRESENTATION LAYER
+# 6. HMI PRESENTATION LAYER (BENUTZEROBERFLÄCHE)
 # ==============================================================================
 st.title("☀️ Villa Avatar")
 
@@ -231,6 +232,7 @@ if role and role != st.session_state.aktive_rolle:
 
 if not st.session_state.aktive_rolle: st.stop()
 
+# Host Authentifizierung
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     pwd = st.text_input("🔑 Passwort eingeben:", type="password")
     if pwd and df_passwoerter is not None:
@@ -242,7 +244,7 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
                 st.rerun()
     st.stop()
 
-# USE CASE BUTTONS GENERIEREN
+# Use-Case Menüleiste rendern
 if df_usecases is not None:
     uc_col, hmi_col = df_usecases.columns[0], df_usecases.columns[2]
     allowed = [uc for uc in df_usecases[df_usecases[hmi_col].astype(str).str.lower().str.strip() == "ja"][uc_col].tolist() if st.session_state.aktive_rolle == "Host" or any(x in uc.lower() for x in ["hilfe", "störung", "feedback"])]
@@ -264,7 +266,7 @@ if df_usecases is not None:
 if not st.session_state.aktiver_use_case: st.stop()
 
 # ==============================================================================
-# 🎯 INFORMATIONSMATRIX-ANSICHT (HOST INPUT)
+# 🎯 USE CASE: INFORMATIONSMATRIX-ANSICHT (MANUELLER HOST-INPUT)
 # ==============================================================================
 current_uc_clean = str(st.session_state.aktiver_use_case).strip().lower()
 
@@ -330,7 +332,7 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
     st.stop()
 
 # ==============================================================================
-# 📊 USE CASE BERICHTSENGINE (ZEITRAUM UND DATUM AUS STATUSSPALTE)
+# 📊 USE CASE: BERICHTSENGINE (SPEZIFIKATIONSKONFORM: STATUSSPALTEN-PARSING)
 # ==============================================================================
 elif "bericht" in current_uc_clean:
     report_options = []
@@ -370,11 +372,6 @@ elif "bericht" in current_uc_clean:
 
         if st.session_state.selected_report_timeframe:
             st.markdown(f"### 📋 {st.session_state.selected_report_type} ({st.session_state.selected_report_timeframe})")
-            
-            if st.session_state.debug_modus_aktiv:
-                st.warning("⚙️ **DEBUG MODE ACTIVE**")
-                st.write("📁 **Vorhandene Spalten in Excel-Wissensbasis:**")
-                st.json(list(df_wissen.columns))
 
             heute = datetime.datetime.now()
             delta_days = {"1 Woche": 7, "1 Monat": 30, "3 Monate": 90, "1 Jahr": 365}.get(st.session_state.selected_report_timeframe, 30)
@@ -404,9 +401,9 @@ elif "bericht" in current_uc_clean:
                     status_val = str(row[echte_status_spalte]).strip() if pd.notna(row[echte_status_spalte]) else ""
                     if not status_val or status_val.lower() == "nan": continue
                     
-                    # Parsen der Statusspalte auf Basis des Datums und Zustands
+                    # Extrahiere strukturierte Events {datum, zustand} aus Statusspalte
                     events = parse_status_history(status_val)
-                    # Filterung: Zustand stimmt überein UND das Datum liegt im gewählten Fenster
+                    # Filterung: Zustand stimmt überein UND das Datum liegt im gewählten Zeitraum
                     relevant_events = [e for e in events if e["zustand"] == target_keyword.lower() and e["datum"] >= stichtag]
                     
                     if relevant_events:
@@ -427,7 +424,7 @@ elif "bericht" in current_uc_clean:
     st.stop()
 
 # ==============================================================================
-# 7. DER STANDARD-ZWEIG (CHATS & INPUT FÜR GÄSTE UND HHM-MELDUNGEN)
+# 7. CHAT & INPUT INTERFACE (GÄSTE-ANFRAGEN & AUTOMATISCHE PROTOKOLLE)
 # ==============================================================================
 else:
     uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == current_uc_clean]
@@ -470,7 +467,7 @@ else:
                 st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
                 execute_matrix_input("Keine Information", st.session_state.selected_object, u_text)
             else:
-                with st.spinner("Prüfe Daten..."):
+                with st.spinner("Antwort wird generiert..."):
                     res = call_gemini(u_text, extract_context_for_object(st.session_state.selected_object))
                     if res.wissensluecke_erkannt or not res.antwort_text or any(p in res.antwort_text.lower() for p in ["keine information", "weiß ich nicht", "leider nein"]):
                         st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
@@ -480,7 +477,7 @@ else:
             st.rerun()
             
         elif direction == "INPUT":
-            with st.spinner("Protokolliere in Matrix..."):
+            with st.spinner("Eintrag wird in Excel-Matrix protokolliert..."):
                 execute_matrix_input(st.session_state.aktiver_use_case, st.session_state.selected_object, u_text)
                 st.session_state.messages.append({"role": "assistant", "content": danke_tmpl.replace("{use_case}", st.session_state.aktiver_use_case)})
                 st.rerun()
