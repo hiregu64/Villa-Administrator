@@ -105,21 +105,39 @@ def find_column_by_fuzzy_name(headers, target_name):
     return cleaned.index(search) + 1 if search in cleaned else None
 
 # ==============================================================================
-# 3. HELPER FOR STATUS PARSING (Format: DD.MM.YYYY Zustand)
+# 3. CHRONOLOGISCHE STATUS-PARSING ENGINE (Tolerant & Exakt)
 # ==============================================================================
 def parse_status_history(status_val):
     if pd.isna(status_val) or str(status_val).lower() == 'nan': return []
-    events = [e.strip() for e in str(status_val).split('\n') if e.strip()]
+    
+    raw_str = str(status_val).replace('\n', ' ')
+    
+    # Erkennt ein- oder zweistellige Tage/Monate und 4-stellige Jahre
+    # Erkennt optionale Uhrzeiten und beliebige Trennzeichen dahinter
+    pattern = r'(\d{1,2}\.\d{1,2}\.\d{4})(?:\s+\d{2}:\d{2})?[\s\:\-\(]*(offen|ok|behoben|erfolgt|geschlossen|aktiv)'
+    matches = re.findall(pattern, raw_str, re.IGNORECASE)
+    
     parsed = []
-    for event in events:
-        match = re.search(r'(\d{2}\.\d{2}\.\d{4})\s+(.+)', event)
-        if match:
-            try:
-                parsed.append({
-                    "datum": datetime.datetime.strptime(match.group(1), "%d.%m.%Y"),
-                    "zustand": match.group(2).strip().lower()
-                })
-            except: continue
+    for dat_str, zustand_str in matches:
+        try:
+            # Normiert einstellige Datumsangaben (z.B. 20.5.2026 -> 20.05.2026) für datetime
+            parts = dat_str.split('.')
+            d = int(parts[0])
+            m = int(parts[1])
+            y = int(parts[2])
+            dt = datetime.datetime(y, m, d)
+            
+            # Zustand vereinheitlichen
+            z_clean = zustand_str.strip().lower()
+            if z_clean in ["ok", "behoben", "erfolgt", "geschlossen"]:
+                z_clean = "ok"
+                
+            parsed.append({"datum": dt, "zustand": z_clean})
+        except:
+            continue
+            
+    # Sortiert alle gefundenen Ereignisse chronologisch nach Datum aufsteigend
+    parsed.sort(key=lambda x: x["datum"])
     return parsed
 
 # ==============================================================================
@@ -234,11 +252,10 @@ if role and role != st.session_state.aktive_rolle:
 
 if not st.session_state.aktive_rolle: st.stop()
 
-# Host Authentifizierung (HIER: Fix für den Admin-Passwort Debug Mode)
+# Host Authentifizierung
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     pwd = st.text_input("🔑 Passwort eingeben:", type="password")
     if pwd:
-        # Bedingung 1: Exakte Passwort-Prüfung über die Tabelle
         passwort_korrekt = False
         if df_passwoerter is not None:
             p_pwd_col = df_passwoerter.columns[1]
@@ -246,7 +263,6 @@ if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authent
                 if pwd.strip().lower() == str(r[p_pwd_col]).strip().lower():
                     passwort_korrekt = True
         
-        # Bedingung 2: Wenn das Passwort "admin" lautet, gewähren wir direkt Zugang und aktivieren den Debug Modus
         if pwd.strip().lower() == "admin":
             passwort_korrekt = True
             st.session_state.debug_modus_aktiv = True
@@ -333,7 +349,7 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
                 danke_text = "Vielen Dank für deine Information."
                 if df_usecases is not None:
                     uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == current_uc_clean]
-                    if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]):
+                    if not uc_row.empty smash len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]):
                         danke_text = str(uc_row.iloc[0][df_usecases.columns[5]]).strip()
                 st.session_state["erfolgsmeldung_anzeigen"] = danke_text
                 st.session_state["host_text_wert"] = ""
@@ -344,7 +360,7 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
     st.stop()
 
 # ==============================================================================
-# 📊 USE CASE: BERICHTSENGINE (DIAGNOSE IM DEBUG-MODUS)
+# 📊 USE CASE: BERICHTSENGINE
 # ==============================================================================
 elif "bericht" in current_uc_clean:
     report_options = []
@@ -385,7 +401,6 @@ elif "bericht" in current_uc_clean:
         if st.session_state.selected_report_timeframe:
             st.markdown(f"### 📋 {st.session_state.selected_report_type} ({st.session_state.selected_report_timeframe})")
 
-            # --- DYNAMISCHER DIAGNOSE BLOCK BEI ADMIN LOGIN ---
             if st.session_state.debug_modus_aktiv:
                 st.success("⚙️ **Debug Mode Aktiv (Eingeloggt als admin)**")
                 st.write("Verfügbare Excel-Spalten in der Wissensbasis:", list(df_wissen.columns))
@@ -421,23 +436,31 @@ elif "bericht" in current_uc_clean:
                 for idx, row in df_wissen.iterrows():
                     status_val = str(row[echte_status_spalte]).strip() if pd.notna(row[echte_status_spalte]) else ""
                     
-                    if st.session_state.debug_modus_aktiv and status_val:
+                    if st.session_state.debug_modus_aktiv and status_val and status_val.lower() != "nan":
                         st.write(f"Zeile {idx} ({row[bez_col]}): Status-Rohwert = `{status_val}`")
                         
                     if not status_val or status_val.lower() == "nan": continue
                     
+                    # Extrahiert alle Datums-Paare chronologisch sortiert
                     events = parse_status_history(status_val)
-                    relevant_events = [e for e in events if e["zustand"] == target_keyword.lower() and e["datum"] >= stichtag]
                     
-                    if relevant_events:
-                        haupt_text = str(row[echte_ziel_spalte]).strip() if pd.notna(row[echte_ziel_spalte]) else ""
-                        if not haupt_text or haupt_text.lower() == "nan": continue
+                    if events:
+                        # Holt exakt das neueste (letzte) Ereignis aus der Historie
+                        letztes_event = events[-1]
                         
-                        aufbereiteter_text = call_gemini(
-                            prompt=f"Formuliere folgende historische Text-Informationen in einen professionellen Berichtssatz um: {haupt_text} für Objekt {row[bez_col]}",
-                            structured=False
-                        )
-                        report_rows.append({"Eintrag": aufbereiteter_text})
+                        if st.session_state.debug_modus_aktiv:
+                            st.write(f"  ↳ Letztes Ereignis erkannt: Datum={letztes_event['datum'].strftime('%d.%m.%Y')}, Zustand=`{letztes_event['zustand']}`")
+                        
+                        # Prüfung: Entspricht der letzte Zustand dem gesuchten Zustand und liegt im Zeitfenster?
+                        if letztes_event["zustand"] == target_keyword.lower() and letztes_event["datum"] >= stichtag:
+                            haupt_text = str(row[echte_ziel_spalte]).strip() if pd.notna(row[echte_ziel_spalte]) else ""
+                            if not haupt_text or haupt_text.lower() == "nan": continue
+                            
+                            aufbereiteter_text = call_gemini(
+                                prompt=f"Formuliere folgende historische Text-Informationen in einen professionellen Berichtssatz um: {haupt_text} für Objekt {row[bez_col]}",
+                                structured=False
+                            )
+                            report_rows.append({"Eintrag": aufbereiteter_text})
 
             if report_rows:
                 st.markdown("---")
