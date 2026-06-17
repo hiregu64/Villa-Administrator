@@ -349,7 +349,7 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
                 danke_text = "Vielen Dank für deine Information."
                 if df_usecases is not None:
                     uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == current_uc_clean]
-                    if not uc_row.empty smash len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]):
+                    if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]):
                         danke_text = str(uc_row.iloc[0][df_usecases.columns[5]]).strip()
                 st.session_state["erfolgsmeldung_anzeigen"] = danke_text
                 st.session_state["host_text_wert"] = ""
