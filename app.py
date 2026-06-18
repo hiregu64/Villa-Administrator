@@ -387,7 +387,7 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
                 danke_text = "Vielen Dank für deine Information."
                 if df_usecases is not None:
                     uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == current_uc_clean]
-                    if not uc_row.empty and len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]):
+                    if not uc_row.empty && len(df_usecases.columns) > 5 and pd.notna(uc_row.iloc[0][df_usecases.columns[5]]):
                         danke_text = str(uc_row.iloc[0][df_usecases.columns[5]]).strip()
                 st.session_state["erfolgsmeldung_anzeigen"] = danke_text
                 st.session_state["host_text_wert"] = ""
@@ -508,7 +508,7 @@ elif "bericht" in current_uc_clean:
                                 )
                                 report_rows.append({"Eintrag": aufbereiteter_text})
                         else:
-                            # KORREKTUR 1: Kürzere, sachlich korrekte, wohlverständliche Aussage ohne "erfolgreich"
+                            # KORREKTUR 1: Wohlverständlicher, sachlich korrekter Text ohne "erfolgreich"
                             if letztes_event["zustand"] == "ok" and letztes_event["datum"] >= stichtag:
                                 aufbereiteter_text = call_gemini(
                                     prompt=f"Formuliere aus den folgenden Rohdaten einen einzigen, kurzen und wohlverständlichen Berichtssatz für den Host. Bringe die Information sachlich korrekt auf den Punkt, anstatt den Text nur stumpf zu wiederholen. Nutze keine wertenden Wörter wie 'erfolgreich'. Text: {haupt_text}",
@@ -559,32 +559,22 @@ else:
 
     aktuell_gewaehlt = val_innen or val_aussen or val_naehe
 
-    # KORREKTUR 3: Radikaler, sequenzieller Neuaufbau bei Objektwechsel (Löscht alten Chat)
+    # KORREKTUR 3: Sequenzieller Neuaufbau bei Objektwechsel (Löscht alten Chat)
     if aktuell_gewaehlt and aktuell_gewaehlt != st.session_state.selected_object:
         st.session_state.selected_object = aktuell_gewaehlt
         st.session_state.messages = []
-        st.session_state.chat_input_key += 1  # Erzwingt die Löschung des Eingabefeldes
+        st.session_state.chat_input_key += 1  # Bereinigt das Eingabefeld
         st.rerun()
 
     if not st.session_state.selected_object: st.stop()
 
-    # Verlauf anzeigen
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]): st.markdown(msg["content"])
-        
-    # KORREKTUR 2: Kompaktes HMI mittels st.text_input direkt im Zeilenfluss statt st.chat_input
-    user_input = st.text_input(
-        fragetext, 
-        placeholder="Hier eingeben...", 
-        label_visibility="collapsed", 
-        key=f"chat_input_field_{st.session_state.chat_input_key}"
-    )
-    
-    # Auslöser bei Enter-Taste im Textfeld
-    if user_input and (not st.session_state.messages or st.session_state.messages[-1]["content"] != user_input):
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        
-        u_text = user_input
+    # KORREKTUR ENDLOSSCHLEIFE: Verwendung eines on_change Callbacks
+    def handle_chat_input():
+        u_text = st.session_state[f"chat_input_field_{st.session_state.chat_input_key}"].strip()
+        if not u_text:
+            return
+            
+        st.session_state.messages.append({"role": "user", "content": u_text})
         is_not_found = "nicht gefunden" in st.session_state.selected_object.lower()
         
         if direction == "OUTPUT":
@@ -592,17 +582,29 @@ else:
                 st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
                 execute_matrix_input("Keine Information", st.session_state.selected_object, u_text)
             else:
-                with st.spinner("Antwort wird generiert..."):
-                    res = call_gemini(u_text, extract_context_for_object(st.session_state.selected_object))
-                    if res.wissensluecke_erkannt or not res.antwort_text or any(p in res.antwort_text.lower() for p in ["keine information", "weiß ich nicht", "leider nein"]):
-                        st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
-                        execute_matrix_input("Keine Information", st.session_state.selected_object, u_text)
-                    else:
-                        st.session_state.messages.append({"role": "assistant", "content": res.antwort_text})
-            st.rerun()
+                res = call_gemini(u_text, extract_context_for_object(st.session_state.selected_object))
+                if res.wissensluecke_erkannt or not res.antwort_text or any(p in res.antwort_text.lower() for p in ["keine information", "weiß ich nicht", "leider nein"]):
+                    st.session_state.messages.append({"role": "assistant", "content": FALLBACK_SATZ})
+                    execute_matrix_input("Keine Information", st.session_state.selected_object, u_text)
+                else:
+                    st.session_state.messages.append({"role": "assistant", "content": res.antwort_text})
             
         elif direction == "INPUT":
-            with st.spinner("Eintrag wird protokoliert..."):
-                execute_matrix_input(st.session_state.aktiver_use_case, st.session_state.selected_object, u_text)
-                st.session_state.messages.append({"role": "assistant", "content": danke_tmpl.replace("{use_case}", st.session_state.aktiver_use_case)})
-                st.rerun()
+            execute_matrix_input(st.session_state.aktiver_use_case, st.session_state.selected_object, u_text)
+            st.session_state.messages.append({"role": "assistant", "content": danke_tmpl.replace("{use_case}", st.session_state.aktiver_use_case)})
+        
+        # Ändert den Key, um das HMI-Feld sofort zu leeren
+        st.session_state.chat_input_key += 1
+
+    # Verlauf anzeigen
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]): st.markdown(msg["content"])
+        
+    # KORREKTUR 2: Kompaktes HMI direkt im Layoutfluss per st.text_input + Callback
+    st.text_input(
+        fragetext, 
+        placeholder="Hier eingeben...", 
+        label_visibility="collapsed", 
+        key=f"chat_input_field_{st.session_state.chat_input_key}",
+        on_change=handle_chat_input
+    )
