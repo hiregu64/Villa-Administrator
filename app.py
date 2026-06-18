@@ -134,15 +134,22 @@ def parse_status_history(status_val):
     parsed.sort(key=lambda x: x["datum"])
     return parsed
 
-# Hilfsfunktion zur Berechnung der effektiven Tage ohne Winterpause (Nov-März)
 def get_effective_days_excluding_winter(start_date, end_date):
+    if start_date >= end_date: 
+        return 0
     total_days = (end_date - start_date).days
+    if total_days > 3650:
+        return total_days
+        
     winter_days = 0
     curr = start_date
-    while curr <= end_date:
+    for _ in range(total_days + 1):
+        if curr > end_date:
+            break
         if curr.month in [11, 12, 1, 2, 3]:
             winter_days += 1
         curr += datetime.timedelta(days=1)
+        
     return max(0, total_days - winter_days)
 
 # ==============================================================================
@@ -261,20 +268,16 @@ if not st.session_state.aktive_rolle: st.stop()
 if st.session_state.aktive_rolle == "Host" and not st.session_state.host_authentifiziert:
     pwd = st.text_input("🔑 Passwort eingeben:", type="password")
     if pwd:
-        passwort_korrekt = False
-        if df_passwoerter is not None:
+        if pwd.strip().lower() == "admin":
+            st.session_state.host_authentifiziert = True
+            st.session_state.debug_modus_aktiv = True
+            st.rerun()
+        elif df_passwoerter is not None:
             p_pwd_col = df_passwoerter.columns[1]
             for _, r in df_passwoerter.iterrows():
                 if pwd.strip().lower() == str(r[p_pwd_col]).strip().lower():
-                    passwort_korrekt = True
-        
-        if pwd.strip().lower() == "admin":
-            passwort_korrekt = True
-            st.session_state.debug_modus_aktiv = True
-            
-        if passwort_korrekt:
-            st.session_state.host_authentifiziert = True
-            st.rerun()
+                    st.session_state.host_authentifiziert = True
+                    st.rerun()
     st.stop()
 
 # Menüleiste
@@ -371,8 +374,7 @@ elif "bericht" in current_uc_clean:
     report_options = []
     mapping_dropdown_zu_lexikon_zeile = {}
 
-    # Periode aus dem Lexikon extrahieren falls vorhanden (z. B. "30" oder "90")
-    lexikon_periode = 180  # Standard-Fallback (Halbjährlich)
+    lexikon_periode = 180  
     if df_lexikon is not None:
         col_spaltenname, col_usecase, col_regel, col_details = df_lexikon.columns[0], df_lexikon.columns[3], df_lexikon.columns[4], df_lexikon.columns[5]
         df_bericht_rows = df_lexikon[df_lexikon[col_usecase].astype(str).str.strip().str.lower() == "bericht"]
@@ -387,7 +389,6 @@ elif "bericht" in current_uc_clean:
                         "spalte_wissen": str(row_lex[col_spaltenname]).strip(),
                         "such_zustand": str(row_lex[col_regel]).strip().lower()
                     }
-                # Prüfen auf hinterlegte Periode im Textfeld des Lexikons
                 if "wartung" in str(row_lex[col_spaltenname]).lower():
                     nums = re.findall(r'\d+', str(row_lex[col_details]) + " " + str(row_lex[col_regel]))
                     if nums: lexikon_periode = int(nums[0])
@@ -411,6 +412,10 @@ elif "bericht" in current_uc_clean:
 
         if st.session_state.selected_report_timeframe:
             st.markdown(f"### 📋 {st.session_state.selected_report_type} ({st.session_state.selected_report_timeframe})")
+
+            if st.session_state.debug_modus_aktiv:
+                st.info("⚙️ **Debug-Modus Aktiv**")
+                st.write("Ermittelte Standard-Periode aus Lexikon:", lexikon_periode)
 
             heute = datetime.datetime.now()
             delta_days = {"1 Woche": 7, "1 Monat": 30, "3 Monate": 90, "1 Jahr": 365}.get(st.session_state.selected_report_timeframe, 30)
@@ -436,6 +441,9 @@ elif "bericht" in current_uc_clean:
             echte_ziel_spalte = next((c for c in df_wissen.columns if str(c).strip().lower() == str(ziel_spalte).strip().lower()), None)
             echte_status_spalte = next((c for c in df_wissen.columns if str(c).strip().lower() == f"{str(echte_ziel_spalte).strip().lower()} status"), None)
 
+            if st.session_state.debug_modus_aktiv:
+                st.write(f"Zieldatei-Spalten-Mapping: `{ziel_spalte}` -> `{echte_ziel_spalte}` | Status -> `{echte_status_spalte}`")
+
             if echte_ziel_spalte and echte_status_spalte:
                 for idx, row in df_wissen.iterrows():
                     status_val = str(row[echte_status_spalte]).strip() if pd.notna(row[echte_status_spalte]) else ""
@@ -450,12 +458,13 @@ elif "bericht" in current_uc_clean:
 
                     ist_wartungs_report = "wartung" in echte_ziel_spalte.lower()
                     
-                    # 🚀 INTELLIGENTE WARTUNGS-LOGIK
                     if ist_wartungs_report:
                         effektive_tage = get_effective_days_excluding_winter(letztes_event["datum"], heute)
                         
+                        if st.session_state.debug_modus_aktiv:
+                            st.write(f"🔍 **Wartung Check** [{row[bez_col]}]: Letzter Eintrag: {letztes_event['datum'].strftime('%d.%m.%Y')} ({letztes_event['zustand']}) | Effektive Tage: {effektive_tage} | Winterpause aktuell: {is_winterpause}")
+
                         if target_keyword == "offen":
-                            # Wartung gilt als offen, wenn die Periode überschritten ist UND wir nicht in der Winterpause sind
                             if effektive_tage > lexikon_periode and not is_winterpause:
                                 aufbereiteter_text = call_gemini(
                                     prompt=f"Formuliere einen kurzen Berichtssatz, dass die Wartung für '{row[bez_col]}' fällig ist (Letzte Wartung war vor {effektive_tage} echten Tagen am {letztes_event['datum'].strftime('%d.%m.%Y')}, Limit ist {lexikon_periode} Tage). Keine Optionen.",
@@ -463,16 +472,16 @@ elif "bericht" in current_uc_clean:
                                 )
                                 report_rows.append({"Eintrag": aufbereiteter_text})
                         else:
-                            # Wartung erfolgt: Letztes Datum ungleich offen und innerhalb des gewählten HMI-Zeitfensters
                             if letztes_event["zustand"] == "ok" and letztes_event["datum"] >= stichtag:
                                 aufbereiteter_text = call_gemini(
                                     prompt=f"Formuliere sachlich, dass die Wartung für '{row[bez_col]}' am {letztes_event['datum'].strftime('%d.%m.%Y')} erfolgreich durchgeführt wurde. Text: {haupt_text}",
                                     structured=False
                                 )
                                 report_rows.append({"Eintrag": aufbereiteter_text})
-
-                    # 📋 STANDARD-LOGIK (Störungen, Feedback, Wissenslücken)
                     else:
+                        if st.session_state.debug_modus_aktiv:
+                            st.write(f"🔍 **Standard Check** [{row[bez_col]}]: Letzter Zustand: {letztes_event['zustand']} (Gesucht: {target_keyword}) | Datum: {letztes_event['datum'].strftime('%d.%m.%Y')} (Stichtag: {stichtag.strftime('%d.%m.%Y')})")
+
                         if letztes_event["zustand"] == target_keyword.lower() and letztes_event["datum"] >= stichtag:
                             aufbereiteter_text = call_gemini(
                                 prompt=f"Bringe folgende Information für das Objekt '{row[bez_col]}' in 1 bis maximal 2 verständliche, rein sachliche Berichtssätze. Keine Optionen, Metatexte oder Aufzählungen. Text: {haupt_text}",
@@ -480,7 +489,6 @@ elif "bericht" in current_uc_clean:
                             )
                             report_rows.append({"Eintrag": aufbereiteter_text})
 
-            # Saubere Listen-Ausgabe
             if report_rows:
                 st.markdown("---")
                 st.markdown(f"**Diese {st.session_state.selected_report_type.lower()} sind gemeldet:**")
