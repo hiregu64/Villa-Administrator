@@ -41,7 +41,8 @@ for key, value in [
     ("debug_modus_aktiv", False), ("last_write_status", "Noch kein Schreibvorgang."), 
     ("last_extracted_context", "Kein Kontext extrahiert."), ("matrix_data", None),
     ("erfolgsmeldung_anzeigen", None), ("host_text_wert", ""),
-    ("selected_report_type", None), ("selected_report_timeframe", None)
+    ("selected_report_type", None), ("selected_report_timeframe", None),
+    ("chat_input_key", 0)
 ]:
     if key not in st.session_state:
         st.session_state[key] = value
@@ -195,7 +196,7 @@ def call_gemini(prompt, context="", structured=True):
             data = json.loads(res.text)
             return KiAntwortSchema(wissensluecke_erkannt=bool(data.get("wissensluecke_erkannt", True)), antwort_text=str(data.get("antwort_text", "")))
         
-        return client.models.generate_content(model="gemini-2.5-flash", contents=prompt, config=types.GenerateContentConfig(system_instruction="Du bist ein präzises Assistenzsystem für Berichte. Formuliere die Rohdaten sachlich korrekt in 1 bis maximal 2 verständliche Sätze um. Gib NIEMALS Optionen, Auswahlmöglichkeiten, Nummerierungen oder Metatexte aus.", temperature=0.1)).text
+        return client.models.generate_content(model="gemini-2.5-flash", contents=prompt, config=types.GenerateContentConfig(system_instruction="Du bist ein präzises Assistenzsystem für Berichte. Formuliere die Rohdaten sachlich korrekt in einen verständlichen, rein deskriptiven Satz um. Dichte niemals Wörter wie 'erfolgreich' hinzu, wenn diese nicht explizit in den Rohdaten stehen. Gib NIEMALS Optionen, Auswahlmöglichkeiten, Nummerierungen oder Metatexte aus.", temperature=0.1)).text
     except:
         return KiAntwortSchema(wissensluecke_erkannt=True, antwort_text="") if structured else "Fehler bei Textaufbereitung."
 
@@ -356,12 +357,13 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
         idx_naehe = options_naehe.index(current_obj) if current_obj in options_naehe else None
         val_naehe = st.selectbox("In der Nähe", options=options_naehe, index=idx_naehe, placeholder="Bitte wähle das Objekt aus", key="h_naehe", label_visibility="collapsed")
 
-    if val_innen and val_innen != st.session_state.selected_object:
-        st.session_state.selected_object = val_innen; st.session_state.selected_field = None; st.session_state["erfolgsmeldung_anzeigen"] = None; st.rerun()
-    elif val_aussen and val_aussen != st.session_state.selected_object:
-        st.session_state.selected_object = val_aussen; st.session_state.selected_field = None; st.session_state["erfolgsmeldung_anzeigen"] = None; st.rerun()
-    elif val_naehe and val_naehe != st.session_state.selected_object:
-        st.session_state.selected_object = val_naehe; st.session_state.selected_field = None; st.session_state["erfolgsmeldung_anzeigen"] = None; st.rerun()
+    # Sequenzieller Neuaufbau bei Objektwechsel im Host Input
+    aktuell_gewaehlt_host = val_innen or val_aussen or val_naehe
+    if aktuell_gewaehlt_host and aktuell_gewaehlt_host != st.session_state.selected_object:
+        st.session_state.selected_object = aktuell_gewaehlt_host
+        st.session_state.selected_field = None
+        st.session_state["erfolgsmeldung_anzeigen"] = None
+        st.rerun()
 
     if st.session_state.selected_object:
         if df_lexikon is not None:
@@ -396,7 +398,7 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
     st.stop()
 
 # ==============================================================================
-# 4. BERICHTSENGINE
+# 🎯 USE CASE: BERICHTE
 # ==============================================================================
 elif "bericht" in current_uc_clean:
     report_options = []
@@ -506,9 +508,10 @@ elif "bericht" in current_uc_clean:
                                 )
                                 report_rows.append({"Eintrag": aufbereiteter_text})
                         else:
+                            # KORREKTUR 1: Kürzere, sachlich korrekte, wohlverständliche Aussage ohne "erfolgreich"
                             if letztes_event["zustand"] == "ok" and letztes_event["datum"] >= stichtag:
                                 aufbereiteter_text = call_gemini(
-                                    prompt=f"Formuliere sachlich, dass die Wartung für '{row[bez_col]}' am {letztes_event['datum'].strftime('%d.%m.%Y')} erfolgreich durchgeführt wurde. Text: {haupt_text}",
+                                    prompt=f"Formuliere aus den folgenden Rohdaten einen einzigen, kurzen und wohlverständlichen Berichtssatz für den Host. Bringe die Information sachlich korrekt auf den Punkt, anstatt den Text nur stumpf zu wiederholen. Nutze keine wertenden Wörter wie 'erfolgreich'. Text: {haupt_text}",
                                     structured=False
                                 )
                                 report_rows.append({"Eintrag": aufbereiteter_text})
@@ -533,7 +536,7 @@ elif "bericht" in current_uc_clean:
     st.stop()
 
 # ==============================================================================
-# 5. CHAT & INPUT INTERFACE
+# 🎯 USE CASE: CHAT & INPUT INTERFACE
 # ==============================================================================
 else:
     uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == current_uc_clean]
@@ -556,19 +559,32 @@ else:
 
     aktuell_gewaehlt = val_innen or val_aussen or val_naehe
 
+    # KORREKTUR 3: Radikaler, sequenzieller Neuaufbau bei Objektwechsel (Löscht alten Chat)
     if aktuell_gewaehlt and aktuell_gewaehlt != st.session_state.selected_object:
-        st.session_state.selected_object = aktuell_gewaehlt; st.session_state.messages = []; st.rerun()
+        st.session_state.selected_object = aktuell_gewaehlt
+        st.session_state.messages = []
+        st.session_state.chat_input_key += 1  # Erzwingt die Löschung des Eingabefeldes
+        st.rerun()
 
     if not st.session_state.selected_object: st.stop()
 
+    # Verlauf anzeigen
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]): st.markdown(msg["content"])
         
-    if user_input := st.chat_input(fragetext):
-        st.session_state.messages.append({"role": "user", "content": user_input}); st.rerun()
+    # KORREKTUR 2: Kompaktes HMI mittels st.text_input direkt im Zeilenfluss statt st.chat_input
+    user_input = st.text_input(
+        fragetext, 
+        placeholder="Hier eingeben...", 
+        label_visibility="collapsed", 
+        key=f"chat_input_field_{st.session_state.chat_input_key}"
+    )
+    
+    # Auslöser bei Enter-Taste im Textfeld
+    if user_input and (not st.session_state.messages or st.session_state.messages[-1]["content"] != user_input):
+        st.session_state.messages.append({"role": "user", "content": user_input})
         
-    if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-        u_text = st.session_state.messages[-1]["content"]
+        u_text = user_input
         is_not_found = "nicht gefunden" in st.session_state.selected_object.lower()
         
         if direction == "OUTPUT":
