@@ -153,17 +153,12 @@ def get_effective_days_excluding_winter(start_date, end_date):
     return max(0, total_days - winter_days)
 
 def parse_period_from_text(text_content):
-    """
-    Übersetzt Freitext-Intervalle intelligent in eine präzise Tagesanzahl.
-    Berücksichtigt auch mehrere genannte Intervalle und wählt das kürzeste aus.
-    """
     if pd.isna(text_content) or str(text_content).strip().lower() == "nan":
         return None
         
     text_clean = str(text_content).lower()
     gefundene_intervalle = []
     
-    # 1. Textbasierte Schlagworte prüfen
     if "wöchentlich" in text_clean or "wochentlich" in text_clean:
         gefundene_intervalle.append(7)
     if "zweiwöchentlich" in text_clean or "zweiwochentlich" in text_clean:
@@ -177,7 +172,6 @@ def parse_period_from_text(text_content):
     if "jährlich" in text_clean or "jahrlich" in text_clean:
         gefundene_intervalle.append(365)
         
-    # 2. Zusätzlich nach reinen Zahlen suchen (z.B. 'alle 14 Tage')
     nums = re.findall(r'\d+', text_clean)
     for n in nums:
         val = int(n)
@@ -506,8 +500,13 @@ elif "bericht" in current_uc_clean:
 
                         if target_keyword == "offen":
                             if effektive_tage > aktive_periode and not is_winterpause:
+                                # Optimierter Prompt für ein natürliches, korrektes Deutsch und konkrete Details
                                 aufbereiteter_text = call_gemini(
-                                    prompt=f"Formuliere einen kurzen Berichtssatz, dass die Wartung für '{row[bez_col]}' fällig ist (Letzte Wartung war vor {effektive_tage} echten Tagen am {letztes_event['datum'].strftime('%d.%m.%Y')}, Limit ist {aktive_periode} Tage). Keine Optionen.",
+                                    prompt=f"Formuliere aus den folgenden Rohdaten einen einzigen, kurzen und grammatikalisch perfekten Berichtssatz für den Host: "
+                                           f"Für das Objekt '{row[bez_col]}' ist die Wartung fällig. "
+                                           f"Nutze den folgenden Anweisungstext und formuliere ihn flüssig und verständlich aus: '{vorgabe_text}'. "
+                                           f"Erwähne sachlich im Satz, dass die letzte Durchführung bereits vor {effektive_tage} Tagen (am {letztes_event['datum'].strftime('%d.%m.%Y')}) war und das Intervall bei {aktive_periode} Tagen liegt. "
+                                           f"Keine Optionen, keine Einleitung.",
                                     structured=False
                                 )
                                 report_rows.append({"Eintrag": aufbereiteter_text})
@@ -529,9 +528,11 @@ elif "bericht" in current_uc_clean:
                             )
                             report_rows.append({"Eintrag": aufbereiteter_text})
 
+            # --- KORRIGIERTE TEXTAUSGABE (DEUTSCHE GRAMMATIK) ---
             if report_rows:
                 st.markdown("---")
-                st.markdown(f"**Diese {st.session_state.selected_report_type.lower()} sind gemeldet:**")
+                # Dynamischer, korrekter deutscher Einleitungssatz
+                st.markdown(f"**Folgende {st.session_state.selected_report_type.lower()} stehen an:**" if target_keyword == "offen" else f"**Folgende {st.session_state.selected_report_type.lower()} wurden registriert:**")
                 for row_data in report_rows: 
                     st.markdown(f"- {row_data['Eintrag']}")
             else:
