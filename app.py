@@ -111,8 +111,6 @@ def parse_status_history(status_val):
     if pd.isna(status_val) or str(status_val).lower() == 'nan': return []
     
     raw_str = str(status_val).replace('\n', ' ')
-    
-    # Tolerantes Pattern: Erlaubt beliebigen Text (wie "(Gast):") zwischen Datum/Uhrzeit und dem Status
     pattern = r'(\d{1,2}\.\d{1,2}\.\d{4})(?:\s+\d{2}:\d{2})?.*?\b(offen|ok|behoben|erfolgt|geschlossen|aktiv)\b'
     matches = re.findall(pattern, raw_str, re.IGNORECASE)
     
@@ -135,6 +133,17 @@ def parse_status_history(status_val):
             
     parsed.sort(key=lambda x: x["datum"])
     return parsed
+
+# Hilfsfunktion zur Berechnung der effektiven Tage ohne Winterpause (Nov-März)
+def get_effective_days_excluding_winter(start_date, end_date):
+    total_days = (end_date - start_date).days
+    winter_days = 0
+    curr = start_date
+    while curr <= end_date:
+        if curr.month in [11, 12, 1, 2, 3]:
+            winter_days += 1
+        curr += datetime.timedelta(days=1)
+    return max(0, total_days - winter_days)
 
 # ==============================================================================
 # 4. LLM KI-ENGINE
@@ -362,6 +371,8 @@ elif "bericht" in current_uc_clean:
     report_options = []
     mapping_dropdown_zu_lexikon_zeile = {}
 
+    # Periode aus dem Lexikon extrahieren falls vorhanden (z. B. "30" oder "90")
+    lexikon_periode = 180  # Standard-Fallback (Halbjährlich)
     if df_lexikon is not None:
         col_spaltenname, col_usecase, col_regel, col_details = df_lexikon.columns[0], df_lexikon.columns[3], df_lexikon.columns[4], df_lexikon.columns[5]
         df_bericht_rows = df_lexikon[df_lexikon[col_usecase].astype(str).str.strip().str.lower() == "bericht"]
@@ -376,6 +387,10 @@ elif "bericht" in current_uc_clean:
                         "spalte_wissen": str(row_lex[col_spaltenname]).strip(),
                         "such_zustand": str(row_lex[col_regel]).strip().lower()
                     }
+                # Prüfen auf hinterlegte Periode im Textfeld des Lexikons
+                if "wartung" in str(row_lex[col_spaltenname]).lower():
+                    nums = re.findall(r'\d+', str(row_lex[col_details]) + " " + str(row_lex[col_regel]))
+                    if nums: lexikon_periode = int(nums[0])
 
     if not report_options:
         report_options = ["Offene Störungen", "Behobene Störungen", "Offene Wartungen", "Erfolgte Wartungen", "Offenes Feedback", "Behobenes Feedback", "Offene Wissenslücken"]
@@ -397,13 +412,10 @@ elif "bericht" in current_uc_clean:
         if st.session_state.selected_report_timeframe:
             st.markdown(f"### 📋 {st.session_state.selected_report_type} ({st.session_state.selected_report_timeframe})")
 
-            if st.session_state.debug_modus_aktiv:
-                st.success("⚙️ **Debug Mode Aktiv (Eingeloggt als admin)**")
-                st.write("Verfügbare Excel-Spalten in der Wissensbasis:", list(df_wissen.columns))
-
             heute = datetime.datetime.now()
             delta_days = {"1 Woche": 7, "1 Monat": 30, "3 Monate": 90, "1 Jahr": 365}.get(st.session_state.selected_report_timeframe, 30)
             stichtag = heute - datetime.timedelta(days=delta_days)
+            is_winterpause = heute.month in [11, 12, 1, 2, 3]
 
             report_rows = []
             bez_col = df_wissen.columns[0]
@@ -424,39 +436,51 @@ elif "bericht" in current_uc_clean:
             echte_ziel_spalte = next((c for c in df_wissen.columns if str(c).strip().lower() == str(ziel_spalte).strip().lower()), None)
             echte_status_spalte = next((c for c in df_wissen.columns if str(c).strip().lower() == f"{str(echte_ziel_spalte).strip().lower()} status"), None)
 
-            if st.session_state.debug_modus_aktiv:
-                st.write(f"Gesuchte Text-Spalte: `{ziel_spalte}` -> Gefunden in Matrix: `{echte_ziel_spalte}`")
-                st.write(f"Gesuchte Status-Spalte: `{ziel_spalte} Status` -> Gefunden in Matrix: `{echte_status_spalte}`")
-
             if echte_ziel_spalte and echte_status_spalte:
                 for idx, row in df_wissen.iterrows():
                     status_val = str(row[echte_status_spalte]).strip() if pd.notna(row[echte_status_spalte]) else ""
-                    
-                    if st.session_state.debug_modus_aktiv and status_val and status_val.lower() != "nan":
-                        st.write(f"Zeile {idx} ({row[bez_col]}): Status-Rohwert = `{status_val}`")
-                        
                     if not status_val or status_val.lower() == "nan": continue
                     
                     events = parse_status_history(status_val)
+                    if not events: continue
                     
-                    if events:
-                        letztes_event = events[-1]
+                    letztes_event = events[-1]
+                    haupt_text = str(row[echte_ziel_spalte]).strip() if pd.notna(row[echte_ziel_spalte]) else ""
+                    if not haupt_text or haupt_text.lower() == "nan": continue
+
+                    ist_wartungs_report = "wartung" in echte_ziel_spalte.lower()
+                    
+                    # 🚀 INTELLIGENTE WARTUNGS-LOGIK
+                    if ist_wartungs_report:
+                        effektive_tage = get_effective_days_excluding_winter(letztes_event["datum"], heute)
                         
-                        if st.session_state.debug_modus_aktiv:
-                            st.write(f"  ↳ Letztes Ereignis erkannt: Datum={letztes_event['datum'].strftime('%d.%m.%Y')}, Zustand=`{letztes_event['zustand']}`")
-                        
+                        if target_keyword == "offen":
+                            # Wartung gilt als offen, wenn die Periode überschritten ist UND wir nicht in der Winterpause sind
+                            if effektive_tage > lexikon_periode and not is_winterpause:
+                                aufbereiteter_text = call_gemini(
+                                    prompt=f"Formuliere einen kurzen Berichtssatz, dass die Wartung für '{row[bez_col]}' fällig ist (Letzte Wartung war vor {effektive_tage} echten Tagen am {letztes_event['datum'].strftime('%d.%m.%Y')}, Limit ist {lexikon_periode} Tage). Keine Optionen.",
+                                    structured=False
+                                )
+                                report_rows.append({"Eintrag": aufbereiteter_text})
+                        else:
+                            # Wartung erfolgt: Letztes Datum ungleich offen und innerhalb des gewählten HMI-Zeitfensters
+                            if letztes_event["zustand"] == "ok" and letztes_event["datum"] >= stichtag:
+                                aufbereiteter_text = call_gemini(
+                                    prompt=f"Formuliere sachlich, dass die Wartung für '{row[bez_col]}' am {letztes_event['datum'].strftime('%d.%m.%Y')} erfolgreich durchgeführt wurde. Text: {haupt_text}",
+                                    structured=False
+                                )
+                                report_rows.append({"Eintrag": aufbereiteter_text})
+
+                    # 📋 STANDARD-LOGIK (Störungen, Feedback, Wissenslücken)
+                    else:
                         if letztes_event["zustand"] == target_keyword.lower() and letztes_event["datum"] >= stichtag:
-                            haupt_text = str(row[echte_ziel_spalte]).strip() if pd.notna(row[echte_ziel_spalte]) else ""
-                            if not haupt_text or haupt_text.lower() == "nan": continue
-                            
-                            # Optimierter, strikter Prompt ohne Optionen-Ausgabe
                             aufbereiteter_text = call_gemini(
-                                prompt=f"Bringe folgende Information für das Objekt '{row[bez_col]}' in 1 bis maximal 2 verständliche, rein sachliche Berichtssätze. Generiere KEINE Einleitungen, KEINE Optionen, KEINE Auswahlmöglichkeiten und keine Metatexte. Text: {haupt_text}",
+                                prompt=f"Bringe folgende Information für das Objekt '{row[bez_col]}' in 1 bis maximal 2 verständliche, rein sachliche Berichtssätze. Keine Optionen, Metatexte oder Aufzählungen. Text: {haupt_text}",
                                 structured=False
                             )
                             report_rows.append({"Eintrag": aufbereiteter_text})
 
-            # Einheitliche, saubere Listen-Ausgabe
+            # Saubere Listen-Ausgabe
             if report_rows:
                 st.markdown("---")
                 st.markdown(f"**Diese {st.session_state.selected_report_type.lower()} sind gemeldet:**")
@@ -522,7 +546,5 @@ else:
         elif direction == "INPUT":
             with st.spinner("Eintrag wird protokoliert..."):
                 execute_matrix_input(st.session_state.aktiver_use_case, st.session_state.selected_object, u_text)
-                st.session_state.messages.append({"role": "assistant", "content": danke_tmpl.replace("{use_case}", st.session_state.aktiver_use_case)})
-                st.rerun()
                 st.session_state.messages.append({"role": "assistant", "content": danke_tmpl.replace("{use_case}", st.session_state.aktiver_use_case)})
                 st.rerun()
