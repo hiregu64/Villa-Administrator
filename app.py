@@ -489,28 +489,20 @@ elif "bericht" in current_uc_clean:
                     if ist_wartungs_report:
                         effektive_tage = get_effective_days_excluding_winter(letztes_event["datum"], heute)
                         
-                        # 1. Vorgabe-Freitext exakt aus dem Spalten_Lexikon extrahieren
+                        # 1. Frequenz-Text DIREKT aus der Wissensbasis-Zeile des aktuellen Objekts auslesen
                         vorgabe_text = ""
-                        if df_lexikon is not None:
-                            col_details_wartung = next((c for c in df_lexikon.columns if "details zur wartung" in c.lower()), None)
-                            col_use_case_e = df_lexikon.columns[4]  # Spalte E
-                            col_spaltenname_a = df_lexikon.columns[0]  # Spalte A
-                            
-                            if col_details_wartung:
-                                lex_row = df_lexikon[
-                                    (df_lexikon[col_spaltenname_a].astype(str).str.strip().str.lower() == str(ziel_spalte).strip().lower()) &
-                                    (df_lexikon[col_use_case_e].astype(str).str.strip().str.lower() == "bericht")
-                                ]
-                                if not lex_row.empty:
-                                    vorgabe_text = str(lex_row.iloc[0][col_details_wartung]).strip()
+                        col_details_wartung_wissen = next((c for c in df_wissen.columns if "details zur wartung" in c.lower()), None)
+                        
+                        if col_details_wartung_wissen and pd.notna(row[col_details_wartung_wissen]):
+                            vorgabe_text = str(row[col_details_wartung_wissen]).strip()
 
-                        # 2. Periode aus dem gefundenen Vorgabetext intelligent ermitteln
+                        # 2. Periode aus dem gefundenen Gerätetext ("wöchentlich...") ermitteln
                         aktive_periode = parse_period_from_text(vorgabe_text)
                         if aktive_periode is None:
                             aktive_periode = standard_fallback_periode
 
                         if st.session_state.debug_modus_aktiv:
-                            st.write(f"🔍 **Wartung Check** [{row[bez_col]}]: Letzter Eintrag: {letztes_event['datum'].strftime('%d.%m.%Y')} ({letztes_event['zustand']}) | Effektive Tage: {effektive_tage} | Vorgabe aus Lexikon: '{vorgabe_text}' | Erkannte Periode: {aktive_periode} Tage | Winterpause aktuell: {is_winterpause}")
+                            st.write(f"🔍 **Wartung Check** [{row[bez_col]}]: Letzter Eintrag: {letztes_event['datum'].strftime('%d.%m.%Y')} ({letztes_event['zustand']}) | Effektive Tage: {effektive_tage} | Text aus Wissensbasis: '{vorgabe_text}' | Erkannte Periode: {aktive_periode} Tage | Winterpause aktuell: {is_winterpause}")
 
                         if target_keyword == "offen":
                             if effektive_tage > aktive_periode and not is_winterpause:
