@@ -1,3 +1,10 @@
+Hier ist deine app.py im vollständigen Code, exakt bereinigt um die doppelten und grammatikalisch fehlerhaften Überschriften/Einleitungen im Berichts-Widget. Du kannst den gesamten Inhalt kopieren und eins zu eins in deine Datei einfügen:
+
+app
+ PY 
+Geöffnet
+
+Python
 import streamlit as st
 import pandas as pd
 import io
@@ -396,7 +403,7 @@ if "information" in current_uc_clean and "keine" not in current_uc_clean and "be
     st.stop()
 
 # ==============================================================================
-# 📊 USE CASE: BERICHTSENGINE
+# 4. BERICHTSENGINE
 # ==============================================================================
 elif "bericht" in current_uc_clean:
     report_options = []
@@ -436,8 +443,6 @@ elif "bericht" in current_uc_clean:
             st.session_state.selected_report_timeframe = selected_tf; st.rerun()
 
         if st.session_state.selected_report_timeframe:
-            st.markdown(f"### 📋 {st.session_state.selected_report_type} ({st.session_state.selected_report_timeframe})")
-
             heute = datetime.datetime.now()
             delta_days = {"1 Woche": 7, "1 Monat": 30, "3 Monate": 90, "1 Jahr": 365}.get(st.session_state.selected_report_timeframe, 30)
             stichtag = heute - datetime.timedelta(days=delta_days)
@@ -483,14 +488,12 @@ elif "bericht" in current_uc_clean:
                     if ist_wartungs_report:
                         effektive_tage = get_effective_days_excluding_winter(letztes_event["datum"], heute)
                         
-                        # 1. Frequenz-Text DIREKT aus der Wissensbasis-Zeile des aktuellen Objekts auslesen
                         vorgabe_text = ""
                         col_details_wartung_wissen = next((c for c in df_wissen.columns if "details zur wartung" in c.lower()), None)
                         
                         if col_details_wartung_wissen and pd.notna(row[col_details_wartung_wissen]):
                             vorgabe_text = str(row[col_details_wartung_wissen]).strip()
 
-                        # 2. Periode aus dem gefundenen Gerätetext ("wöchentlich...") ermitteln
                         aktive_periode = parse_period_from_text(vorgabe_text)
                         if aktive_periode is None:
                             aktive_periode = standard_fallback_periode
@@ -500,7 +503,6 @@ elif "bericht" in current_uc_clean:
 
                         if target_keyword == "offen":
                             if effektive_tage > aktive_periode and not is_winterpause:
-                                # Optimierter Prompt für ein natürliches, korrektes Deutsch und konkrete Details
                                 aufbereiteter_text = call_gemini(
                                     prompt=f"Formuliere aus den folgenden Rohdaten einen einzigen, kurzen und grammatikalisch perfekten Berichtssatz für den Host: "
                                            f"Für das Objekt '{row[bez_col]}' ist die Wartung fällig. "
@@ -528,11 +530,9 @@ elif "bericht" in current_uc_clean:
                             )
                             report_rows.append({"Eintrag": aufbereiteter_text})
 
-            # --- KORRIGIERTE TEXTAUSGABE (DEUTSCHE GRAMMATIK) ---
+            # --- BEREINIGTE TEXTAUSGABE ---
             if report_rows:
                 st.markdown("---")
-                # Dynamischer, korrekter deutscher Einleitungssatz
-                st.markdown(f"**Folgende {st.session_state.selected_report_type.lower()} stehen an:**" if target_keyword == "offen" else f"**Folgende {st.session_state.selected_report_type.lower()} wurden registriert:**")
                 for row_data in report_rows: 
                     st.markdown(f"- {row_data['Eintrag']}")
             else:
@@ -540,7 +540,7 @@ elif "bericht" in current_uc_clean:
     st.stop()
 
 # ==============================================================================
-# 7. CHAT & INPUT INTERFACE
+# 5. CHAT & INPUT INTERFACE
 # ==============================================================================
 else:
     uc_row = df_usecases[df_usecases[df_usecases.columns[0]].astype(str).str.lower().str.strip() == current_uc_clean]
