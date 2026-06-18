@@ -158,7 +158,7 @@ def parse_period_from_text(text_content):
     Berücksichtigt auch mehrere genannte Intervalle und wählt das kürzeste aus.
     """
     if pd.isna(text_content) or str(text_content).strip().lower() == "nan":
-        return 180
+        return None
         
     text_clean = str(text_content).lower()
     gefundene_intervalle = []
@@ -184,8 +184,7 @@ def parse_period_from_text(text_content):
         if val > 0:
             gefundene_intervalle.append(val)
             
-    # Wenn etwas gefunden wurde, nimm das kürzeste Intervall, ansonsten Fallback 180 Tage
-    return min(gefundene_intervalle) if gefundene_intervalle else 180
+    return min(gefundene_intervalle) if gefundene_intervalle else None
 
 # ==============================================================================
 # 4. LLM KI-ENGINE
@@ -410,7 +409,7 @@ elif "bericht" in current_uc_clean:
     mapping_dropdown_zu_lexikon_zeile = {}
 
     if df_lexikon is not None:
-        col_spaltenname, col_usecase, col_regel, col_details = df_lexikon.columns[0], df_lexikon.columns[3], df_lexikon.columns[4], df_lexikon.columns[5]
+        col_spaltenname, col_usecase, col_details = df_lexikon.columns[0], df_lexikon.columns[3], df_lexikon.columns[5]
         df_bericht_rows = df_lexikon[df_lexikon[col_usecase].astype(str).str.strip().str.lower() == "bericht"]
 
         for _, row_lex in df_bericht_rows.iterrows():
@@ -420,13 +419,9 @@ elif "bericht" in current_uc_clean:
                 if clean_opt and clean_opt not in report_options:
                     report_options.append(clean_opt)
                     
-                    # Extrahiere die Periode dynamisch per intelligenter Text-Übersetzung
-                    ermittelte_periode = parse_period_from_text(str(row_lex[col_details]) + " " + str(row_lex[col_regel]))
-                    
                     mapping_dropdown_zu_lexikon_zeile[clean_opt] = {
                         "spalte_wissen": str(row_lex[col_spaltenname]).strip(),
-                        "such_zustand": str(row_lex[col_regel]).strip().lower(),
-                        "periode": ermittelte_periode
+                        "such_zustand": "offen" if "offen" in raw_detail.lower() else "ok"
                     }
 
     if not report_options:
@@ -458,11 +453,10 @@ elif "bericht" in current_uc_clean:
             bez_col = df_wissen.columns[0]
             lexikon_meta = mapping_dropdown_zu_lexikon_zeile.get(st.session_state.selected_report_type)
             
-            ziel_spalte, target_keyword, aktive_periode = None, "offen", 180
+            ziel_spalte, target_keyword, standard_fallback_periode = None, "offen", 180
             if lexikon_meta:
                 ziel_spalte = lexikon_meta["spalte_wissen"]
                 target_keyword = lexikon_meta["such_zustand"]
-                aktive_periode = lexikon_meta["periode"]
             else:
                 rep_lower = st.session_state.selected_report_type.lower()
                 if "störung" in rep_lower: ziel_spalte = "Störung"
@@ -495,8 +489,28 @@ elif "bericht" in current_uc_clean:
                     if ist_wartungs_report:
                         effektive_tage = get_effective_days_excluding_winter(letztes_event["datum"], heute)
                         
+                        # 1. Vorgabe-Freitext exakt aus dem Spalten_Lexikon extrahieren
+                        vorgabe_text = ""
+                        if df_lexikon is not None:
+                            col_details_wartung = next((c for c in df_lexikon.columns if "details zur wartung" in c.lower()), None)
+                            col_use_case_e = df_lexikon.columns[4]  # Spalte E
+                            col_spaltenname_a = df_lexikon.columns[0]  # Spalte A
+                            
+                            if col_details_wartung:
+                                lex_row = df_lexikon[
+                                    (df_lexikon[col_spaltenname_a].astype(str).str.strip().str.lower() == str(ziel_spalte).strip().lower()) &
+                                    (df_lexikon[col_use_case_e].astype(str).str.strip().str.lower() == "bericht")
+                                ]
+                                if not lex_row.empty:
+                                    vorgabe_text = str(lex_row.iloc[0][col_details_wartung]).strip()
+
+                        # 2. Periode aus dem gefundenen Vorgabetext intelligent ermitteln
+                        aktive_periode = parse_period_from_text(vorgabe_text)
+                        if aktive_periode is None:
+                            aktive_periode = standard_fallback_periode
+
                         if st.session_state.debug_modus_aktiv:
-                            st.write(f"🔍 **Wartung Check** [{row[bez_col]}]: Letzter Eintrag: {letztes_event['datum'].strftime('%d.%m.%Y')} ({letztes_event['zustand']}) | Effektive Tage: {effektive_tage} | Erkannte Periode: {aktive_periode} Tage | Winterpause aktuell: {is_winterpause}")
+                            st.write(f"🔍 **Wartung Check** [{row[bez_col]}]: Letzter Eintrag: {letztes_event['datum'].strftime('%d.%m.%Y')} ({letztes_event['zustand']}) | Effektive Tage: {effektive_tage} | Vorgabe aus Lexikon: '{vorgabe_text}' | Erkannte Periode: {aktive_periode} Tage | Winterpause aktuell: {is_winterpause}")
 
                         if target_keyword == "offen":
                             if effektive_tage > aktive_periode and not is_winterpause:
