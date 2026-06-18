@@ -152,6 +152,41 @@ def get_effective_days_excluding_winter(start_date, end_date):
         
     return max(0, total_days - winter_days)
 
+def parse_period_from_text(text_content):
+    """
+    Übersetzt Freitext-Intervalle intelligent in eine präzise Tagesanzahl.
+    Berücksichtigt auch mehrere genannte Intervalle und wählt das kürzeste aus.
+    """
+    if pd.isna(text_content) or str(text_content).strip().lower() == "nan":
+        return 180
+        
+    text_clean = str(text_content).lower()
+    gefundene_intervalle = []
+    
+    # 1. Textbasierte Schlagworte prüfen
+    if "wöchentlich" in text_clean or "wochentlich" in text_clean:
+        gefundene_intervalle.append(7)
+    if "zweiwöchentlich" in text_clean or "zweiwochentlich" in text_clean:
+        gefundene_intervalle.append(14)
+    if "monatlich" in text_clean:
+        gefundene_intervalle.append(30)
+    if "vierteljährlich" in text_clean or "vierteljahrlich" in text_clean or "quartal" in text_clean:
+        gefundene_intervalle.append(90)
+    if "halbjährlich" in text_clean or "halbjahrlich" in text_clean:
+        gefundene_intervalle.append(180)
+    if "jährlich" in text_clean or "jahrlich" in text_clean:
+        gefundene_intervalle.append(365)
+        
+    # 2. Zusätzlich nach reinen Zahlen suchen (z.B. 'alle 14 Tage')
+    nums = re.findall(r'\d+', text_clean)
+    for n in nums:
+        val = int(n)
+        if val > 0:
+            gefundene_intervalle.append(val)
+            
+    # Wenn etwas gefunden wurde, nimm das kürzeste Intervall, ansonsten Fallback 180 Tage
+    return min(gefundene_intervalle) if gefundene_intervalle else 180
+
 # ==============================================================================
 # 4. LLM KI-ENGINE
 # ==============================================================================
@@ -374,7 +409,6 @@ elif "bericht" in current_uc_clean:
     report_options = []
     mapping_dropdown_zu_lexikon_zeile = {}
 
-    lexikon_periode = 180  
     if df_lexikon is not None:
         col_spaltenname, col_usecase, col_regel, col_details = df_lexikon.columns[0], df_lexikon.columns[3], df_lexikon.columns[4], df_lexikon.columns[5]
         df_bericht_rows = df_lexikon[df_lexikon[col_usecase].astype(str).str.strip().str.lower() == "bericht"]
@@ -385,13 +419,15 @@ elif "bericht" in current_uc_clean:
                 clean_opt = raw_detail.split("(")[0].strip()
                 if clean_opt and clean_opt not in report_options:
                     report_options.append(clean_opt)
+                    
+                    # Extrahiere die Periode dynamisch per intelligenter Text-Übersetzung
+                    ermittelte_periode = parse_period_from_text(str(row_lex[col_details]) + " " + str(row_lex[col_regel]))
+                    
                     mapping_dropdown_zu_lexikon_zeile[clean_opt] = {
                         "spalte_wissen": str(row_lex[col_spaltenname]).strip(),
-                        "such_zustand": str(row_lex[col_regel]).strip().lower()
+                        "such_zustand": str(row_lex[col_regel]).strip().lower(),
+                        "periode": ermittelte_periode
                     }
-                if "wartung" in str(row_lex[col_spaltenname]).lower():
-                    nums = re.findall(r'\d+', str(row_lex[col_details]) + " " + str(row_lex[col_regel]))
-                    if nums: lexikon_periode = int(nums[0])
 
     if not report_options:
         report_options = ["Offene Störungen", "Behobene Störungen", "Offene Wartungen", "Erfolgte Wartungen", "Offenes Feedback", "Behobenes Feedback", "Offene Wissenslücken"]
@@ -413,10 +449,6 @@ elif "bericht" in current_uc_clean:
         if st.session_state.selected_report_timeframe:
             st.markdown(f"### 📋 {st.session_state.selected_report_type} ({st.session_state.selected_report_timeframe})")
 
-            if st.session_state.debug_modus_aktiv:
-                st.info("⚙️ **Debug-Modus Aktiv**")
-                st.write("Ermittelte Standard-Periode aus Lexikon:", lexikon_periode)
-
             heute = datetime.datetime.now()
             delta_days = {"1 Woche": 7, "1 Monat": 30, "3 Monate": 90, "1 Jahr": 365}.get(st.session_state.selected_report_timeframe, 30)
             stichtag = heute - datetime.timedelta(days=delta_days)
@@ -426,10 +458,11 @@ elif "bericht" in current_uc_clean:
             bez_col = df_wissen.columns[0]
             lexikon_meta = mapping_dropdown_zu_lexikon_zeile.get(st.session_state.selected_report_type)
             
-            ziel_spalte, target_keyword = None, "offen"
+            ziel_spalte, target_keyword, aktive_periode = None, "offen", 180
             if lexikon_meta:
                 ziel_spalte = lexikon_meta["spalte_wissen"]
                 target_keyword = lexikon_meta["such_zustand"]
+                aktive_periode = lexikon_meta["periode"]
             else:
                 rep_lower = st.session_state.selected_report_type.lower()
                 if "störung" in rep_lower: ziel_spalte = "Störung"
@@ -442,6 +475,7 @@ elif "bericht" in current_uc_clean:
             echte_status_spalte = next((c for c in df_wissen.columns if str(c).strip().lower() == f"{str(echte_ziel_spalte).strip().lower()} status"), None)
 
             if st.session_state.debug_modus_aktiv:
+                st.info("⚙ **Debug-Modus Aktiv**")
                 st.write(f"Zieldatei-Spalten-Mapping: `{ziel_spalte}` -> `{echte_ziel_spalte}` | Status -> `{echte_status_spalte}`")
 
             if echte_ziel_spalte and echte_status_spalte:
@@ -462,12 +496,12 @@ elif "bericht" in current_uc_clean:
                         effektive_tage = get_effective_days_excluding_winter(letztes_event["datum"], heute)
                         
                         if st.session_state.debug_modus_aktiv:
-                            st.write(f"🔍 **Wartung Check** [{row[bez_col]}]: Letzter Eintrag: {letztes_event['datum'].strftime('%d.%m.%Y')} ({letztes_event['zustand']}) | Effektive Tage: {effektive_tage} | Winterpause aktuell: {is_winterpause}")
+                            st.write(f"🔍 **Wartung Check** [{row[bez_col]}]: Letzter Eintrag: {letztes_event['datum'].strftime('%d.%m.%Y')} ({letztes_event['zustand']}) | Effektive Tage: {effektive_tage} | Erkannte Periode: {aktive_periode} Tage | Winterpause aktuell: {is_winterpause}")
 
                         if target_keyword == "offen":
-                            if effektive_tage > lexikon_periode and not is_winterpause:
+                            if effektive_tage > aktive_periode and not is_winterpause:
                                 aufbereiteter_text = call_gemini(
-                                    prompt=f"Formuliere einen kurzen Berichtssatz, dass die Wartung für '{row[bez_col]}' fällig ist (Letzte Wartung war vor {effektive_tage} echten Tagen am {letztes_event['datum'].strftime('%d.%m.%Y')}, Limit ist {lexikon_periode} Tage). Keine Optionen.",
+                                    prompt=f"Formuliere einen kurzen Berichtssatz, dass die Wartung für '{row[bez_col]}' fällig ist (Letzte Wartung war vor {effektive_tage} echten Tagen am {letztes_event['datum'].strftime('%d.%m.%Y')}, Limit ist {aktive_periode} Tage). Keine Optionen.",
                                     structured=False
                                 )
                                 report_rows.append({"Eintrag": aufbereiteter_text})
