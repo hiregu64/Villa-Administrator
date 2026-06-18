@@ -1,10 +1,3 @@
-Hier ist deine app.py im vollständigen Code, exakt bereinigt um die doppelten und grammatikalisch fehlerhaften Überschriften/Einleitungen im Berichts-Widget. Du kannst den gesamten Inhalt kopieren und eins zu eins in deine Datei einfügen:
-
-app
- PY 
-Geöffnet
-
-Python
 import streamlit as st
 import pandas as pd
 import io
